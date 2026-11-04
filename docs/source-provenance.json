@@ -1,0 +1,53 @@
+{
+  "origin": "JP Wealth OS approved planning snapshot",
+  "source_build": "bf37c2d8b795861d",
+  "date": "2026-11-04",
+  "files": [
+    {
+      "source": "src/js/30-accounting/06-planning/01-engine.js",
+      "target": "dist/assets/planning-engine.js",
+      "sha256": "d698bf884e8dce907c255f20170f76e5919938cde755f575847f63ce7dbba5b2",
+      "modification": "none"
+    },
+    {
+      "source": "src/js/30-accounting/06-planning/02-state.js",
+      "target": "dist/assets/planning-state.js",
+      "sha256": "f45e90bd8d913ac25e5f0d7fecf217d295ab70c00fd169ee4c291212e8b822c0",
+      "modification": "none"
+    },
+    {
+      "source": "src/js/10-domain/08-usd-brl-quote.js",
+      "target": "dist/assets/quote.js",
+      "sourceSha256": "f86355fba756dbb267d3f4144dcd861bcc533d42295489727f55aebcb58eedd2",
+      "modification": "Only isolated quote cache key namespaces; same provider, TTL and historical/current distinction."
+    },
+    {
+      "source": "src/js/30-accounting/06-planning/03-ui.js",
+      "target": "dist/assets/planning-ui.js",
+      "sourceSha256": "b1e617185ab4e924fee4cf822b7c755206d60ce2ac63fdaf01015a34e2dd64c0",
+      "targetSha256": "daec80c565e217189397658522657b2cb7471de4e07acf1362d69ca1ac4d805f",
+      "modification": "Only public branding/labels and isolated monthly preference key; command and calculation flow unchanged. Report signature uses only the standalone brand."
+    },
+    {
+      "source": "src/styles/app.css",
+      "target": "dist/assets/planning.css",
+      "sourceSha256": "5492367c9d9793f08f8c175bacc4291c160366d7fa4045541b6ca61e2e96af6b",
+      "targetSha256": "5e04e76352a114363feb03b3e0197ac3140c46cda573b3e8e141bc73fee39af6",
+      "modification": "Exact465-line planning block; own tokens/shell styles separate."
+    },
+    {
+      "source": "tools/planning_parity_test.py",
+      "target": "tests/reference_ui.py",
+      "sourceSha256": "e32c4bade47d4bbfdf269c5539be5b0f5224d96e2c67e3f3e539e1538ae4d19d",
+      "targetSha256": "6305bb16b90b8fb7eb36e7cd8c725e01302fbf882c0cf49c8da8acc255a310c0",
+      "modification": "Source-grounded journeys extracted; branding/cache keys and draft capture adapter updated."
+    },
+    {
+      "source": "tools/planning_compact_table_test.py",
+      "target": "tests/planning_compact_table_test.py",
+      "sourceSha256": "0ae1b0ef88af5b7ebb9c6200d8593f6b9bba9e9ceb9f98a5d5da1303df25643b",
+      "targetSha256": "4f884621c07cbfeb412543074f3c2328fcacc54374a338a7cc67f2056fe079d9",
+      "modification": "Only transitive monthly geometry/value helpers and constants, without original shell/runner imports."
+    }
+  ]
+}
