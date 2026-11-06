@@ -7,14 +7,13 @@ window.JPWNavigation={navigateLocal(primary,view){return primary==='planning'&&J
 (function(){
  const THEME='planejamento_patrimonial_theme_v1',MONTHLY='planejamento_patrimonial_monthly_view_v1',DRAFTS='planejamento_patrimonial_restored_drafts_v1',PROJECTION='planejamento_patrimonial_restore_projection_v1',PROJECTION_ARCHIVE='planejamento_patrimonial_restore_projection_archive_v1';
  const $=id=>document.getElementById(id),clone=x=>structuredClone(x);
- let imported=null,importEpoch=null,themeRaw=null,themeReadable=true,opener=null;
+ let imported=null,importEpoch=null,opener=null;
  const data=$('data-dialog');
  function say(text){$('data-message').textContent=text;}
  function download(value,prefix){const blob=new Blob([JSON.stringify(value,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=prefix+'-'+new Date().toISOString().slice(0,10)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
- function viewTheme(theme){document.documentElement.dataset.theme=theme;$('theme-button').textContent=theme==='dark'?'Tema claro':'Tema escuro';$('theme-button').setAttribute('aria-label',theme==='dark'?'Ativar tema claro':'Ativar tema escuro');}
- function loadTheme(){try{themeRaw=localStorage.getItem(THEME);if(themeRaw!==null&&!['light','dark'].includes(themeRaw)){themeReadable=false;viewTheme('light');return;}viewTheme(themeRaw||'light');}catch(_){themeReadable=false;viewTheme('light');}}
- function setTheme(){const next=document.documentElement.dataset.theme==='dark'?'light':'dark';viewTheme(next);try{if(!themeReadable||localStorage.getItem(THEME)!==themeRaw)throw Error('Preferência mudou ou não pôde ser conferida.');localStorage.setItem(THEME,next);if(localStorage.getItem(THEME)!==next)throw Error('Gravação não confirmada.');themeRaw=next;}catch(_){$('storage-message').textContent='Tema aplicado temporariamente. A preferência anterior foi preservada ou não pôde ser confirmada.';$('storage-status').hidden=false;}}
- function currentPreferences(){let raw=localStorage.getItem(MONTHLY),monthly=raw===null?{version:1,highlightPast:true,fromCurrent:false}:JSON.parse(raw);return {theme:document.documentElement.dataset.theme,monthly};}
+ // Light is the only offered appearance; legacy preferences remain recoverable.
+ function viewTheme(){document.documentElement.dataset.theme='light';}
+ function currentPreferences(){let raw=localStorage.getItem(MONTHLY),monthly=raw===null?{version:1,highlightPast:true,fromCurrent:false}:JSON.parse(raw);return {theme:'light',monthly};}
  function recoveredDrafts(){let raw=localStorage.getItem(DRAFTS);if(raw===null)return [];const list=JSON.parse(raw);if(!Array.isArray(list)||list.length>200||list.some(x=>!x||typeof x.label!=='string'||typeof x.text!=='string'||Object.keys(x).sort().join(',')!=='label,text'))throw Error('Rascunhos recuperados incompatíveis; preserve a cópia de recuperação.');return list;}
  function draftList(){return [...recoveredDrafts(),...JPWPlanning.ui.backupDrafts().map(x=>({label:x.label,text:x.text}))];}
  function renderDrafts(){const list=$('draft-list');list.replaceChildren();try{const entries=recoveredDrafts();$('restored-drafts').hidden=!entries.length;for(const entry of entries){const box=document.createElement('div'),title=document.createElement('h4'),input=document.createElement('textarea');box.className='draft-item';title.textContent=entry.label;input.value=entry.text;input.readOnly=true;input.setAttribute('aria-label',entry.label);box.append(title,input);list.append(box);}}catch(error){say(error.message);}}
@@ -23,9 +22,9 @@ window.JPWNavigation={navigateLocal(primary,view){return primary==='planning'&&J
  function resetUI(){JPWPlanning.ui.reset();JPWPlanning.commands.resetContext();updateStatus();if(!$('planning').hidden)JPWPlanning.ui.render(true);}
  function journalValue(){const raw=localStorage.getItem(PROJECTION);return raw===null?null:PlanningBackup.inspect(raw);}
  function projection(backup){
-  const entries=[[THEME,backup.preferences.theme],[MONTHLY,JSON.stringify(backup.preferences.monthly)],[DRAFTS,JSON.stringify(backup.drafts)]];
+  const entries=[[THEME,'light'],[MONTHLY,JSON.stringify(backup.preferences.monthly)],[DRAFTS,JSON.stringify(backup.drafts)]];
   for(const [key,value] of entries){localStorage.setItem(key,value);if(localStorage.getItem(key)!==value)throw Error('Não foi possível confirmar '+key+'.');}
-  localStorage.removeItem(PROJECTION);if(localStorage.getItem(PROJECTION)!==null)throw Error('Preferências salvas; conclusão do journal não confirmada.');themeReadable=true;themeRaw=backup.preferences.theme;viewTheme(themeRaw);renderDrafts();
+  localStorage.removeItem(PROJECTION);if(localStorage.getItem(PROJECTION)!==null)throw Error('Preferências salvas; conclusão do journal não confirmada.');viewTheme();renderDrafts();
  }
  function resumeProjection(){try{const pending=journalValue();if(!pending)return false;if(JSON.stringify(PlanningStore.exportDocument())!==JSON.stringify(pending.document)){say('Há uma restauração de preferências pendente para outra base. Exporte a recuperação antes de conferir outro arquivo.');return true;}projection(pending);say('Base conferida e preferências/rascunhos da restauração concluídos.');return true;}catch(error){say('Base conferida; restauração de preferências ainda pendente: '+error.message);return true;}}
  // A backdrop gesture only dismisses. Reuse each dialog's cancellation path;
@@ -35,7 +34,7 @@ window.JPWNavigation={navigateLocal(primary,view){return primary==='planning'&&J
  document.addEventListener('pointerdown',event=>{const d=event.target;backdropStart=d instanceof HTMLDialogElement&&d.open&&outsideDialog(event,d)?d:null;},true);
  document.addEventListener('pointercancel',()=>{backdropStart=null;},true);
  document.addEventListener('click',event=>{const d=backdropStart;backdropStart=null;if(!d||!d.open||event.target!==d||!outsideDialog(event,d))return;event.preventDefault();event.stopImmediatePropagation();if(d.dispatchEvent(new CustomEvent('cancel',{cancelable:true,detail:{source:'backdrop'}})))d.close();},true);
- $('theme-button').addEventListener('click',setTheme);$('data-button').addEventListener('click',openData);$('recovery-button').addEventListener('click',openData);
+ $('data-button').addEventListener('click',openData);$('recovery-button').addEventListener('click',openData);
  data.addEventListener('close',()=>{imported=null;$('import-file').value='';$('import-review').hidden=true;if(opener?.isConnected)opener.focus({preventScroll:true});});
  $('export-button').addEventListener('click',()=>{try{const backup=PlanningBackup.create({preferences:currentPreferences(),drafts:draftList()});download(backup,'planejamento-patrimonial');say('Backup preparado com os dados confirmados e rascunhos para leitura/cópia. Guarde o arquivo em um local seguro.');}catch(error){say('Backup não exportado: '+error.message+' Use a cópia de recuperação se a base estiver bloqueada.');}});
  $('export-recovery').addEventListener('click',()=>{try{const recovery=PlanningStore.exportRecovery();for(const key of [THEME,MONTHLY,DRAFTS,PROJECTION,PROJECTION_ARCHIVE]){recovery.localPreferences=recovery.localPreferences||{};try{recovery.localPreferences[key]=localStorage.getItem(key);}catch(_){recovery.localPreferences[key]='LEITURA_INDISPONÍVEL';}}recovery.unsavedDrafts=JPWPlanning.ui.backupDrafts().map(x=>({label:x.label,text:x.text}));download(recovery,'planejamento-patrimonial-recuperacao');say('Cópia de recuperação preparada. Ela preserva conteúdo bruto e pendências; não é importada automaticamente como backup normal.');}catch(error){say('Não foi possível preparar a recuperação: '+error.message);}});
@@ -58,7 +57,7 @@ window.JPWNavigation={navigateLocal(primary,view){return primary==='planning'&&J
  $('confirm-reload').addEventListener('click',()=>{$('reload-dialog').close();const state=PlanningStore.reload();if(state.status==='READY')resetUI();updateStatus();openData();if(state.status==='READY'){if(!resumeProjection())say('Base gravada conferida. Confirmações anteriores foram invalidadas.');}else say('A base continua bloqueada: '+state.reason);});
  document.querySelector('.site-brand').addEventListener('click',e=>{e.preventDefault();if(JPWPlanning.ui.selectView('start')!==false)document.getElementById('site-title').focus({preventScroll:true});});
  window.addEventListener('beforeunload',e=>{if(JPWPlanning.ui.hasPendingWork()||PlanningStore.status().status==='UNKNOWN'){e.preventDefault();e.returnValue='';}});
- loadTheme();PlanningStore.subscribe(updateStatus);JPWPlanning.commands.resetContext();updateStatus();if(!$('planning').hidden)JPWPlanning.ui.render(true);
+ viewTheme();PlanningStore.subscribe(updateStatus);JPWPlanning.commands.resetContext();updateStatus();if(!$('planning').hidden)JPWPlanning.ui.render(true);
  try{if(localStorage.getItem(PROJECTION)!==null){$('storage-status').hidden=false;$('storage-message').textContent='Há preferências ou rascunhos de uma restauração pendente. Use Backup e recuperação → Conferir base gravada para concluir.';}}catch(_){}
  $('app-version').textContent=typeof PP_BUILD==='string'?PP_BUILD:'0.1.0 · prévia';
 })();

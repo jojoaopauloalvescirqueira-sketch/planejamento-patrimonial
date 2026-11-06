@@ -137,3 +137,10 @@ html[data-theme=dark] #planning .pl-native-monthly-grid .pl-month-outside-plan>:
 #planning .pl-heading-actions{margin-left:auto}
 @media(max-width:700px){#planning .pl-shell{padding-top:4px}#planning .pl-heading-actions{justify-content:flex-end}}
 @media(max-width:600px){.site-header{padding-top:8px;padding-bottom:8px}.site-brand{flex-basis:100%;gap:8px}.site-brand .brand-mark{width:32px;height:32px;padding:6px;flex-basis:32px}.site-actions{flex:1;justify-content:flex-start}}
+
+/* Official local wordmark endorses the standalone planner. */
+.site-brand .brand-identity{display:grid;gap:2px;min-width:0}
+.site-brand h1{font-size:clamp(18px,1.8vw,24px)}
+.brand-endorsement{display:flex;align-items:center;gap:6px;min-height:14px;font-size:11px;line-height:1;color:var(--ink-dim)}
+.brand-endorsement img{display:block;width:auto;height:14px;max-width:100%;object-fit:contain}
+html[data-theme=dark] .brand-endorsement img{background:#fff;border-radius:2px}

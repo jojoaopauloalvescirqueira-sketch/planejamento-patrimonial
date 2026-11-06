@@ -47,6 +47,11 @@ with sync_playwright() as pw:
  def visual():
   ctx,page,errors,network=boot()
   try:
+   page.evaluate("localStorage.setItem('planejamento_patrimonial_theme_v1','dark')");base=page.evaluate("localStorage.getItem(PlanningStore.KEY)");page.emulate_media(color_scheme='dark');page.reload();page.wait_for_selector('[data-pl-start]')
+   assert page.locator('html').get_attribute('data-theme')=='light' and page.locator('#theme-button').count()==0
+   assert page.evaluate("localStorage.getItem('planejamento_patrimonial_theme_v1')")=='dark' and page.evaluate("localStorage.getItem(PlanningStore.KEY)")==base
+   assert page.locator('.site-brand .brand-mark i').count()==3
+   placement=page.evaluate("()=>{const a=document.querySelector('.brand-mark').getBoundingClientRect(),b=document.querySelector('.brand-identity').getBoundingClientRect();return {gap:b.left-a.right,center:Math.abs(a.top+a.height/2-b.top-b.height/2)}}");assert placement['gap']>=6 and placement['center']<=2,placement
    reference.seed(page)
    for theme in ['light','dark']:
     page.evaluate('(t)=>document.documentElement.dataset.theme=t',theme)
@@ -104,7 +109,7 @@ with sync_playwright() as pw:
     p2.locator('#restore-ack').check();p2.locator('#restore-button').click();assert 'base foi restaurada' in p2.locator('#data-message').inner_text();assert p2.evaluate('JPWPlanning.queries.snapshot().accounts.length')==1
     assert p2.evaluate("localStorage.getItem('planejamento_patrimonial_restore_projection_v1')!==null")
     p2.evaluate('()=>{Storage.prototype.setItem=__realSet}');p2.locator('#reload-button').click();p2.locator('#confirm-reload').click();assert 'concluídos' in p2.locator('#data-message').inner_text();assert p2.locator('#restored-drafts').is_visible() and p2.locator('#draft-list textarea').input_value()=='{"value":"75"}'
-    assert p2.evaluate("localStorage.getItem('planejamento_patrimonial_restore_projection_v1')===null") and p2.locator('html').get_attribute('data-theme')=='dark'
+    assert p2.evaluate("localStorage.getItem('planejamento_patrimonial_restore_projection_v1')===null") and p2.locator('html').get_attribute('data-theme')=='light' and p2.evaluate("localStorage.getItem('planejamento_patrimonial_theme_v1')")=='light'
     assert not e2,e2
    finally:ctx2.close()
   finally:ctx.close()

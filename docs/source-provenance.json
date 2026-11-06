@@ -113,8 +113,23 @@
       "source": "Planejamento Patrimonial 04a04c1d135f51ee",
       "target": "dist/assets/app.js",
       "sourceSha256": "fd7529276824d02462330f09ceb6b4439db5fbf209570b9a08955361156ce62f",
-      "targetSha256": "18dbc288e3418a66909c2cc5f5a5151766847b8e9975954bdce36fe536a9e36d",
-      "modification": "Brand navigation focuses the sole site heading only after accepted navigation; financial commands and persistence unchanged."
+      "targetSha256": "87b732ff4ddae8f13aea7ae8e94a115019568d3c158d612206ba21ccc114bed1",
+      "modification": "Brand navigation focuses the sole site heading only after accepted navigation; financial commands and persistence unchanged. Light-only appearance: no theme control, stored legacy dark does not activate, exports use light and explicit legacy restore normalizes only the applied theme; financial persistence unchanged."
+    },
+    {
+      "source": "JP Wealth OS/assets/jp-wealth-brand-red.png",
+      "target": "dist/assets/jp-wealth-brand-red.png",
+      "modification": "none",
+      "sha256": "a77960904ec84b92ad2b1701b5beec6979613b8192dc449e9be8ecbdde10cd85",
+      "targetSha256": "a77960904ec84b92ad2b1701b5beec6979613b8192dc449e9be8ecbdde10cd85"
     }
-  ]
+  ],
+  "visualIdentity": {
+    "product": "Planejamento Patrimonial",
+    "endorsement": "by JP Wealth",
+    "asset": "dist/assets/jp-wealth-brand-red.png",
+    "scope": "Owner-approved header attribution; standalone code, storage and hosting remain separate.",
+    "icon": "Original local blue three-bar mark restored to the left of the product title.",
+    "appearance": "Light only; legacy dark backup metadata remains readable."
+  }
 }
