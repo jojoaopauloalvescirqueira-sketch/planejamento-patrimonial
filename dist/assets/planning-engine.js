@@ -184,7 +184,7 @@
         });
       }
       if (monthKey(p.startMonth) && ordinal(p.startMonth) + 119 <= 119999 && object(p.closures)) {
-        const verification = timeline(p, { month: addMonths(p.startMonth, 119) });
+        const verification = timeline(p, { month: addMonths(p.startMonth, 119), balancePolicy:'confirmed-projection' });
         verification.forEach(r => {
           if (p.closures[r.month] && p.closures[r.month].confirmed === true && !r.finalized) errors.push(prefix + ': fechamento confirmado inválido em ' + r.month + '.');
         });
@@ -221,7 +221,8 @@
     const today = monthKey(options.month) || plan.startMonth;
     const defaultRate = profile(plan.profileId) ? profile(plan.profileId).rate : null;
     const rows = [];
-    let open = premiseAmount(plan.initialUsd) ? plan.initialUsd : null, continuous = true;
+    let open = premiseAmount(plan.initialUsd) ? plan.initialUsd : null, continuous = true, blockingMonth = null;
+    const governed = !options.reference && (options.balancePolicy === 'confirmed-projection' || Object.values(plan.closures||{}).some(c=>c&&c.recordsReview!==undefined));
     function flows(list, month, label, issues) {
       if (!Array.isArray(list)) { issues.push(label + ' inválidos.'); return null; }
       let total = 0;
@@ -233,7 +234,8 @@
       return total;
     }
     for (let i = 0; i < 120; i++) {
-      const month = addMonths(plan.startMonth, i), issues = [];
+      const month = addMonths(plan.startMonth, i), issues = [], blockedBy = governed ? blockingMonth : null, actualMonth = governed && month <= today;
+      if (blockedBy) open = null;
       const future = object(plan.future) && own(plan.future, month) ? plan.future[month] : {};
       const result = object(plan.results) && own(plan.results, month) ? plan.results[month] : null;
       const closure = object(plan.closures) && own(plan.closures, month) ? plan.closures[month] : null;
@@ -258,44 +260,52 @@
         if (!object(result) || !cents(result.usd)) { issues.push('Resultado em USD inválido.'); rate = null; }
         else if (open === 0 && result.usd !== 0) { issues.push('Resultado não nulo sem capital de abertura.'); rate = null; }
         else { resultUsd = result.usd; rate = open === null ? null : open === 0 ? 0 : resultUsd / open; }
-      } else if (!finite(rate) || rate < -1) { issues.push('Taxa mensal inválida.'); rate = null; }
+      } else if (actualMonth) { resultUsd = 0; rate = null; }
+      else if (!finite(rate) || rate < -1) { issues.push('Taxa mensal inválida.'); rate = null; }
       else if (open !== null) resultUsd = open * rate;
       const hasContributionRecords = !options.reference && Array.isArray(plan.contributions) && plan.contributions.some(f => object(f) && f.month === month);
       // Original Formulario1288–1291 expires a forecast only after month end;
       // recording actual flows replaces its cell with the ledger sum1266–1272.
       // A closure always uses effective records, even when that sum is zero.
-      const usePlanned = options.reference || (month >= today && !requestedClose && !hasContributionRecords);
+      const usePlanned = options.reference || (!actualMonth && month >= today && !requestedClose && !hasContributionRecords);
       const contribution = ledgerContribution === null || (usePlanned && planned === null) ? null : usePlanned ? planned : ledgerContribution;
-      if (open === null) issues.push('Saldo anterior indisponível.');
+      if (open === null && !blockedBy) issues.push('Saldo anterior indisponível.');
       let close = open !== null && resultUsd !== null && contribution !== null && withdrawal !== null ? open + resultUsd + contribution - withdrawal : null;
       if (close !== null && (!finite(close) || !finite(resultUsd) || close < 0)) { issues.push('Saldo final negativo ou fora do limite.'); close = null; }
       if (!finite(resultUsd)) resultUsd = null;
       if (!finite(rate)) rate = null;
-      const finalized = !options.reference && continuous && requestedClose && closure.confirmFlows === true
-        && hasResult && !provisional && close !== null && !issues.length && month <= today;
-      if (requestedClose && !finalized) issues.push('Fechamento requer sequência contínua, resultado válido e conferência dos fluxos.');
+      // A confirmed month attests its own records. Balance availability remains
+      // governed by the preceding contiguous confirmations, never by forecasts.
+      const finalized = !options.reference && requestedClose && closure.confirmFlows === true
+        && hasResult && !provisional && !issues.length && month <= today && (governed || continuous && close !== null);
+      if (requestedClose && !finalized) issues.push('Fechamento requer resultado válido e conferência dos registros do mês.');
       continuous = finalized;
       const phase = finalized ? 'confirmed' : month < today ? 'pending' : month === today ? 'current' : 'projected';
       const historical = object(options.historicalQuotes) ? options.historicalQuotes[month] : null;
       const matching = validQuote(historical) && historical.referenceDate.slice(0, 7) === month ? historical.rate : null;
       const fxRate = finalized && validQuote(closure.fxQuote) ? closure.fxQuote.rate : month < today ? matching : (validQuote(options.quote) ? options.quote.rate : null);
       const brl = close !== null && fxRate !== null ? close * fxRate : null;
-      rows.push({ month, openUsd: open, rate, resultUsd, contributionUsd: contribution, withdrawalUsd: withdrawal,
+      rows.push({ ...(governed ? { projectionStatus: blockedBy ? 'WAITING_CLOSURE' : issues.length ? 'INVALID' : 'READY', blockingMonth: blockedBy, balanceStatus: blockedBy ? 'WAITING_CLOSURE' : finalized ? 'CONFIRMED' : actualMonth ? 'PARTIAL' : 'PROJECTED' } : {}), month, openUsd: open, rate, resultUsd: actualMonth && !hasResult ? null : resultUsd, contributionUsd: contribution, withdrawalUsd: withdrawal,
         closeUsd: close, phase, finalized, provisional, fxRate, closeBrl: finite(brl) ? brl : null,
         referenceCloseUsd: plan.reference && Array.isArray(plan.reference.rows) && plan.reference.rows[i] ? plan.reference.rows[i].closeUsd : options.reference ? close : null,
         plannedContributionUsd: planned, contributionBlank,actualContributionUsd: ledgerContribution,
-        contributionSource: usePlanned ? 'projected' : 'recorded', resultSource: hasResult ? 'recorded' : 'projected', issues });
+        contributionSource: usePlanned ? 'projected' : 'recorded', resultSource: hasResult ? 'recorded' : actualMonth ? 'missing' : 'projected', issues });
+      // Validation may inspect a fully recorded chain before confirmation. This
+      // detached calculation never supplies balances to UI/read consumers.
+      const recordedForValidation=options.recordValidation===true && root.JPWPlanning.monthlyInputs && Object.values(root.JPWPlanning.monthlyInputs.status(plan,month)).every(Boolean);
+      if (governed && actualMonth && !finalized && !recordedForValidation && blockingMonth === null) blockingMonth = month;
       open = close;
     }
     return rows;
   }
 
-  function confirmedSummary(plan, rows) {
+  function confirmedSummary(plan, rows, options, today) {
     const closed = [];
-    for (const row of rows) { if (!row.finalized) break; closed.push(row); }
+    for (const row of rows) { if (!row.finalized || row.projectionStatus==='WAITING_CLOSURE' || !finite(row.closeUsd)) break; closed.push(row); }
     const sum = key => closed.reduce((n, r) => n + r[key], 0);
+    const governed = options.balancePolicy === 'confirmed-projection', initialAvailable = governed && plan.startMonth <= today && premiseAmount(plan.initialUsd);
     return { confirmedThrough: closed.length ? closed[closed.length - 1].month : null,
-      confirmed: { balanceUsd: closed.length ? closed[closed.length - 1].closeUsd : null,
+      confirmed: { ...(governed ? {basis:closed.length?'CLOSED':initialAvailable?'INITIAL_CAPITAL':'NOT_STARTED'} : {}), balanceUsd: closed.length ? closed[closed.length - 1].closeUsd : initialAvailable ? plan.initialUsd : null,
         initialUsd: plan.initialUsd, contributionsUsd: sum('contributionUsd'), resultUsd: sum('resultUsd'), withdrawalsUsd: sum('withdrawalUsd') } };
   }
   function goalReadModel(plan, rows, referenceRows, today) {
@@ -303,16 +313,18 @@
     for (const key of ['adequate', 'ideal']) {
       const goal = plan.goals && plan.goals[key], initialGoals=plan.incomeBaselineGoals || plan.reference?.config?.goals, initial=initialGoals&&initialGoals[key];
       const usd = goal && finite(goal.usd) ? goal.usd : null, initialUsd = initial && finite(initial.usd) ? initial.usd : null;
-      const found = usd > 0 ? rows.find(r => finite(r.resultUsd) && r.resultUsd >= usd) : null;
+      let found = usd > 0 ? rows.find(r => finite(r.resultUsd) && r.resultUsd >= usd) : null;
       const ref = initialUsd > 0 ? referenceRows.find(r => finite(r.resultUsd) && r.resultUsd >= initialUsd) : null;
       const goalChanged = usd !== null && (initialUsd === null || Math.abs(usd - initialUsd) > .005);
       const invalid = rows.some(r => r.closeUsd === null || r.resultUsd === null);
       const p = profile(plan.profileId), required = usd > 0 && p && p.rate > 0 ? Math.ceil((usd / p.rate - 1e-9) * 100) / 100 : null;
-      goals[key] = { usd, initialUsd, month: found ? found.month : null, referenceMonth: ref ? ref.month : null,
-        status: usd === null ? 'NOT_INFORMED' : invalid ? 'PENDING_DATA' : !found ? 'NOT_REACHED' : found.finalized ? 'ACHIEVED' : 'PROJECTED',
+      const waiting = rows.find(r => r.month <= today && !r.finalized && r.projectionStatus !== undefined);
+      if (waiting && !found?.finalized) found = null;
+      goals[key] = { ...(waiting ? {projectionStatus:'WAITING_CLOSURE',blockingMonth:waiting.month} : {}), usd, initialUsd, month: found ? found.month : null, referenceMonth: ref ? ref.month : null,
+        status: usd === null ? 'NOT_INFORMED' : waiting && found?.finalized ? 'ACHIEVED' : invalid ? 'PENDING_DATA' : !found ? 'NOT_REACHED' : found.finalized ? 'ACHIEVED' : 'PROJECTED',
         goalChanged, deltaMonths: !goalChanged && found && ref ? ordinal(found.month) - ordinal(ref.month) : null,
         remainingMonths: found ? Math.max(0, ordinal(found.month) - ordinal(today)) : null,
-        waitingForClosure: !!found && !found.finalized && found.month < today,
+        waitingForClosure: !!waiting && !found?.finalized || !!found && !found.finalized && found.month < today,
         requiredCapitalUsd: finite(required) ? required : null, durationMonths: found ? ordinal(found.month) - ordinal(plan.startMonth) + 1 : null,
         durationText:found?durationText(ordinal(found.month)-ordinal(plan.startMonth)+1):'' };
     }
@@ -336,11 +348,17 @@
         contributionSource: row.contributionSource, resultSource: row.resultSource, provisional: false, finalized: true }; groups.push(g); }
       g.months++; g.closeUsd = row.closeUsd; g.finalized = g.finalized && row.finalized;
       g.provisional = g.provisional || row.provisional === true;
+      if (row.projectionStatus === 'WAITING_CLOSURE') { g.projectionStatus = 'WAITING_CLOSURE'; g.blockingMonth = g.blockingMonth || row.blockingMonth; for (const key of ['rate','resultUsd','contributionUsd','withdrawalUsd']) g[key] = null; }
       for (const source of ['contributionSource', 'resultSource']) if (g[source] !== row[source]) g[source] = 'mixed';
       g.rate = g.rate === null || row.rate === null ? null : (1 + g.rate) * (1 + row.rate) - 1;
       for (const key of ['resultUsd', 'contributionUsd', 'withdrawalUsd']) g[key] = g[key] === null || row[key] === null ? null : g[key] + row[key];
     });
     return groups;
+  }
+  function projectionState(rows, today) {
+    const invalid = rows.some(r => r.projectionStatus === 'INVALID');
+    const pending = rows.find(r => r.month <= today && !r.finalized);
+    return {projectionStatus: invalid ? 'INVALID' : pending ? 'WAITING_CLOSURE' : 'READY', blockingMonth: pending ? pending.month : null};
   }
   function account(value, options) {
     options = options || {};
@@ -350,9 +368,10 @@
     const referenceRows = p.reference && Array.isArray(p.reference.rows) ? clone(p.reference.rows) : [];
     const issues = rows.flatMap(r => r.issues.map(i => r.month + ': ' + i));
     if (!rows.length) issues.push('Calendário inválido.');
-    return Object.assign({ id: value.id, name: value.name, planId: p.id, rows, referenceRows,
+    const availability = options.balancePolicy === 'confirmed-projection' ? projectionState(rows, today) : {};
+    return Object.assign({ ...availability, id: value.id, name: value.name, planId: p.id, rows, referenceRows,
       goals: goalReadModel(p, rows, referenceRows, today), priceAverage: average(p, today), annual: annual(rows),
-      status: rows.some(r => r.closeUsd === null) || !rows.length ? 'INVALID' : rows.some(r => r.provisional) ? 'PROVISIONAL' : 'READY', issues }, confirmedSummary(p, rows));
+      status: availability.projectionStatus === 'WAITING_CLOSURE' ? 'PENDING_DATA' : rows.some(r => r.closeUsd === null) || !rows.length ? 'INVALID' : rows.some(r => r.provisional) ? 'PROVISIONAL' : 'READY', issues }, confirmedSummary(p, rows, options, today));
   }
 
   function portfolio(envelope, options) {
@@ -379,19 +398,21 @@
           if (at > ordinal(last.month)) return { openUsd: last.closeUsd, closeUsd: last.closeUsd, rate: 0, resultUsd: 0, contributionUsd: 0, withdrawalUsd: 0,
             // Original Formulario545–549: preserve the terminal position and
             // zero flows, never fabricate another confirmed monthly closure.
-            finalized: false, carried: true, knownPosition: key === 'rows' && last.finalized,
+            ...(key === 'rows' && a.projectionStatus ? {projectionStatus:a.projectionStatus,blockingMonth:a.blockingMonth} : {}), finalized: false, carried: true, knownPosition: key === 'rows' && last.finalized,
             contributionSource: 'projected', resultSource: 'projected',
             fxRate: fx, closeBrl: fx !== null && finite(last.closeUsd) && finite(last.closeUsd * fx) ? last.closeUsd * fx : null, provisional: false, issues: [] };
           return series[at - ordinal(first.month)];
         }).filter(Boolean);
+        const unavailable = key === 'rows' ? points.filter(p => p.projectionStatus === 'WAITING_CLOSURE') : [];
         const sum = field => {
+          if (unavailable.length) return null;
           const amount = points.every(p => finite(p[field])) ? points.reduce((n, p) => n + p[field], 0) : null;
           return finite(amount) ? amount : null;
         };
         const openUsd = sum('openUsd'), closeUsd = sum('closeUsd'), resultUsd = sum('resultUsd');
         const finalized = month <= today && points.length > 0 && points.every(p => p.finalized);
         const source = key => points.every(p => p[key] === 'recorded') ? 'recorded' : points.every(p => p[key] === 'projected') ? 'projected' : 'mixed';
-        return { month, openUsd, resultUsd, contributionUsd: sum('contributionUsd'), withdrawalUsd: sum('withdrawalUsd'), closeUsd,
+        return { ...(options.balancePolicy === 'confirmed-projection' ? {projectionStatus:unavailable.length?'WAITING_CLOSURE':'READY',blockingMonth:unavailable.map(p=>p.blockingMonth).sort()[0]||null} : {}), month, openUsd, resultUsd, contributionUsd: sum('contributionUsd'), withdrawalUsd: sum('withdrawalUsd'), closeUsd,
           rate: openUsd === null || resultUsd === null ? null : openUsd > 0 ? resultUsd / openUsd : resultUsd === 0 ? 0 : null,
           finalized, phase: finalized ? 'confirmed' : month < today ? 'pending' : month === today ? 'current' : 'projected',
           provisional: points.some(p => p.provisional), fxRate: finalized ? null : fx,
@@ -406,15 +427,18 @@
       }
     }
     const closed = [];
-    for (const r of rows) { if (!r.finalized) break; closed.push(r); }
+    for (const r of rows) { if (!r.finalized || r.projectionStatus==='WAITING_CLOSURE' || !finite(r.closeUsd)) break; closed.push(r); }
     const last = closed[closed.length - 1];
-    const confirmed = { balanceUsd: last ? last.closeUsd : null,
+    const started = selected.filter(a => a.plan.startMonth <= (monthKey(options.month) || a.plan.startMonth));
+    const initialPosition = started.reduce((n,a) => n + a.plan.initialUsd, 0), initialAvailable = options.balancePolicy === 'confirmed-projection' && started.length > 0 && finite(initialPosition);
+    const confirmed = { ...(options.balancePolicy === 'confirmed-projection' ? {basis:last?'CLOSED':initialAvailable?'INITIAL_CAPITAL':'NOT_STARTED'} : {}), balanceUsd: last ? last.closeUsd : initialAvailable ? initialPosition : null,
       initialUsd: selected.filter(a => !last || a.plan.startMonth <= last.month).reduce((n, a) => n + (finite(a.plan.initialUsd) ? a.plan.initialUsd : 0), 0),
       contributionsUsd: closed.reduce((n, r) => n + r.contributionUsd, 0), resultUsd: closed.reduce((n, r) => n + r.resultUsd, 0), withdrawalsUsd: closed.reduce((n, r) => n + r.withdrawalUsd, 0) };
     const acquisitionMonth = monthKey(options.month) || (rows.length ? rows[0].month : '0000-01');
     const priceAverage = average({ contributions: selected.flatMap(a => a.plan.contributions) }, acquisitionMonth);
-    return { accounts, rows, referenceRows, confirmedThrough: last ? last.month : null, confirmed, priceAverage, annual: annual(rows), goals: null,
-      status: errors.length ? 'INVALID' : !accounts.length ? 'EMPTY' : accounts.some(a => a.status === 'INVALID') ? 'INVALID' : accounts.some(a => a.status === 'PROVISIONAL') ? 'PROVISIONAL' : 'READY',
+    const availability = options.balancePolicy === 'confirmed-projection' ? {projectionStatus:accounts.some(a=>a.projectionStatus==='INVALID')?'INVALID':accounts.some(a=>a.projectionStatus==='WAITING_CLOSURE')?'WAITING_CLOSURE':'READY',blockingMonth:accounts.filter(a=>a.blockingMonth).map(a=>a.blockingMonth).sort()[0]||null} : {};
+    return { ...availability, accounts, rows, referenceRows, confirmedThrough: last ? last.month : null, confirmed, priceAverage, annual: annual(rows), goals: null,
+      status: errors.length ? 'INVALID' : !accounts.length ? 'EMPTY' : availability.projectionStatus==='WAITING_CLOSURE'?'PENDING_DATA' : accounts.some(a => a.status === 'INVALID') ? 'INVALID' : accounts.some(a => a.status === 'PROVISIONAL') ? 'PROVISIONAL' : 'READY',
       issues: errors.concat(accounts.flatMap(a => a.issues)) };
   }
 
@@ -483,14 +507,15 @@
       ? baseRows.reduce((sum, row, i) => sum + projected(row) - projected(rows[i]), 0) : null;
     const reference = plan.reference && Array.isArray(plan.reference.rows) ? plan.reference.rows : [];
     const issues = rows.flatMap(r => r.issues.map(i => r.month + ': ' + i));
-    return { rows, baseRows, goals: goalReadModel(draft, rows, reference, today), baseGoals: goalReadModel(plan, baseRows, reference, today),
+    const availability = options.balancePolicy==='confirmed-projection'?projectionState(baseRows,today):{};
+    return { ...availability, rows, baseRows, goals: goalReadModel(draft, rows, reference, today), baseGoals: goalReadModel(plan, baseRows, reference, today),
       finalUsd, baselineFinalUsd, effectUsd, effectRate, impactRate,
       withinImpactLimit: own(options, 'impactLimit') && impactRate !== null ? viable && impactRate <= options.impactLimit + 1e-10 : null,
       appliedOrder: ['increase', 'stop'].filter(key => key === 'stop' ? own(options, 'stopAfter') : options.increaseUsd !== undefined || options.increasePct !== undefined),
       savedContributionsUsd, differenceUsd:finite(finalUsd)&&finite(baselineFinalUsd)?baselineFinalUsd-finalUsd:null,
       dispensedMonthsCount:baseRows.filter((row,i)=>finite(projected(row))&&finite(projected(rows[i]))&&projected(row)>projected(rows[i])).length,
       viable, provisional: rows.some(r => r.provisional),
-      status: rows.some(r => r.closeUsd === null) ? 'INVALID' : rows.some(r => r.provisional) ? 'PROVISIONAL' : 'SIMULATED', issues };
+      status: availability.projectionStatus==='WAITING_CLOSURE'?'PENDING_DATA':rows.some(r => r.closeUsd === null) ? 'INVALID' : rows.some(r => r.provisional) ? 'PROVISIONAL' : 'SIMULATED', issues };
   }
   function findContributionStop(plan, options) {
     options = options || {};
@@ -607,7 +632,7 @@
     if(chosen.id.startsWith('last:')){begin=addMonths(today,1-Number(chosen.id.slice(5)));end=addMonths(today,1);}
     let contributions=0;
     const completeChartRows = rows.map(r=>{
-      contributions = contributions===null || !finite(r.contributionUsd) ? null : contributions+r.contributionUsd;
+      contributions = r.projectionStatus==='WAITING_CLOSURE' || contributions===null || !finite(r.contributionUsd) ? null : contributions+r.contributionUsd;
       return Object.assign({},r,{cumulativeContributionUsd:contributions,
         confirmedUsd:r.finalized?r.closeUsd:null, pendingUsd:r.month<=today&&!r.finalized?r.closeUsd:null,
         projectedUsd:r.month>=today?r.closeUsd:null});
@@ -626,7 +651,7 @@
     const monthly=names.map((label,i)=>({month:i+1,label,values:tableYears.map(y=>{
       const r=rows.find(row=>row.month===y+'-'+String(i+1).padStart(2,'0'));
       const key=indicator==='Rentabilidade'?'rate':indicator==='Aporte do mês'?'contributionUsd':indicator==='Resultado do mês'?'resultUsd':'closeUsd';
-      return {year:y,value:r&&finite(r[key])?r[key]:null};
+      return {year:y,value:r&&r.projectionStatus!=='WAITING_CLOSURE'&&finite(r[key])?r[key]:null};
     })}));
     const through=model.confirmedThrough, refRows=model.referenceRows || [];
     const aligned=rows.length===refRows.length&&rows.every((r,i)=>r.month===refRows[i].month);
@@ -665,7 +690,7 @@
     const phaseTotals=[];
     for(let i=0;i<monthlyRows.length;i+=12){
       const block=monthlyRows.slice(i,i+12);if(!block.length)continue;
-      const first=block[0],last=block[block.length-1],sum=key=>block.every(r=>finite(r[key]))?block.reduce((n,r)=>n+r[key],0):null;
+      const first=block[0],last=block[block.length-1],sum=key=>block.every(r=>r.projectionStatus!=='WAITING_CLOSURE'&&finite(r[key]))?block.reduce((n,r)=>n+r[key],0):null;
       const startYear=first.month.slice(0,4),endYear=last.month.slice(0,4);
       phaseTotals.push({cyclePhase:Math.floor(i/12)+1,label:startYear===endYear?startYear:startYear+'–'+endYear,
         monthLabel:first.month.endsWith('-01')?'FECHAMENTO':'12 MESES',startMonth:first.month,endMonth:last.month,openUsd:first.openUsd,
@@ -675,8 +700,8 @@
     const gainWithIncrease=single?[5,10,15,20,25].map(increasePct=>({increasePct,...simulate(single.plan,Object.assign({},options,{increasePct}))})):[];
     model.sheet={summary:Object.assign({},c,{contributionsUsd:through?c.contributionsUsd:null,resultUsd:through?c.resultUsd:null,
         initialUsd:sourceAccounts.reduce((n,a)=>n+a.plan.initialUsd,0),averageRate:model.priceAverage?.rate??null,quoteRate:latestQuote}),
-      projection:{year,month:projected?.month||null,closeUsd:projected?.closeUsd??null,closeBrl:projected?.closeBrl??null,years},
-      chart:{period:chosen.id,options:chartOptions,rows:chartRows},realChart:{mode:realChartMode,options:realChartOptions.map(label=>({id:label,label})),rows:realChartRows},
+      projection:{...(model.projectionStatus?{projectionStatus:model.projectionStatus,blockingMonth:model.blockingMonth}:{}),year,month:projected?.month||null,closeUsd:projected?.closeUsd??null,closeBrl:projected?.closeBrl??null,years},
+      chart:{...(model.projectionStatus?{projectionStatus:model.projectionStatus,blockingMonth:model.blockingMonth}:{}),period:chosen.id,options:chartOptions,rows:chartRows},realChart:{mode:realChartMode,options:realChartOptions.map(label=>({id:label,label})),rows:realChartRows},
       table:{mode:tableMode,indicator,years:tableYears,annual:annualRows,monthly},
       comparison:{status:comparisonStatus,through,rows:comparisonRows,message:comparisonStatus==='Comparável'?'Comparação no mesmo fechamento':comparisonStatus},
       goals:model.goals, gainWithIncrease,monthlyRows,phaseTotals,
@@ -684,5 +709,5 @@
     return model;
   }
   const namespace = root.JPWPlanning || (root.JPWPlanning = {});
-  namespace.engine = Object.freeze({ profiles, startMonthRange, monthKey, addMonths, createPlan, validateEnvelope, timeline, account, portfolio, stopBounds, withContributionStop, simulate, findContributionStop, profileView, contributionWeights, formView, formStopPlan, revisePlan, sheetView });
+  namespace.engine = Object.freeze({ profiles, startMonthRange, monthKey, addMonths, createPlan, validateEnvelope, timeline, annual, account, portfolio, stopBounds, withContributionStop, simulate, findContributionStop, profileView, contributionWeights, formView, formStopPlan, revisePlan, sheetView });
 })(window);

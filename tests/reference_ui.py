@@ -15,8 +15,8 @@ def start_journey(page):
           'visible tab names and order match the three current visible sheets')
     check(page.locator('#planning').get_by_role('tab').all_text_contents() == ['Comece aqui'],
           'before first confirmation only Comece aqui is exposed, as in the source access gate')
-    check(page.get_by_role('button', name=re.compile(r'^Preencher (o )?formulário$')).is_visible(),
-          'Comece aqui offers the original Preencher formulário action')
+    check(page.get_by_role('button', name=re.compile(r'^Preencher novo formulário$')).is_visible(),
+          'Comece aqui offers the explicit new-form action')
     normalized = ' '.join(page.locator('#planning [data-pl-start]').inner_text().split())
     # Literal copy read from the native Comece aqui cells on 2026-10-20,
     # including updates supplied by the original month/withdrawal scripts.
@@ -25,8 +25,8 @@ def start_journey(page):
         'Configure uma vez. Depois, registre os resultados de cada mês e acompanhe sua evolução.',
         '1 · Monte seu plano',
         'Escolha mês e ano iniciais. Informe capital inicial, aporte mensal, perfil de risco e renda desejada. A previsão patrimonial é calculada automaticamente.',
-        '2 · Registre pelos botões',
-        'Em Preenchimento mensal, selecione a conta. Registre o resultado total em dólares, os aportes e os saques pelos respectivos botões. Aguarde a confirmação e marque Finalizado = Sim após conferir.',
+        '2 · Preencha pelas células',
+        'Em Preenchimento mensal, selecione a conta. Abra as células de Resultado, Saque e Aporte, revise e confirme cada registro. Se não houve movimento, confirme Sem saque e Sem aporte. Depois use o check de Finalizado. Ao concluir os meses do ano, revise o resumo e assine o encerramento anual antes de registrar o ano seguinte.',
         '3 · Compare e acompanhe',
         'Consolidado soma as contas ou mostra uma conta selecionada. Referência mantém o plano do formulário de cada conta para comparar o planejado e o realizado.',
         'Aporte: dinheiro que você adiciona; informe dólares e reais pagos.',
@@ -41,7 +41,9 @@ def start_journey(page):
           'reading Comece aqui creates no account or financial fact')
 
 def open_form(page):
-    page.get_by_role('button', name=re.compile(r'^Preencher (o )?formulário$')).click()
+    resume=page.locator('[data-pl-action=start-resume]')
+    if resume.count(): resume.first.click()
+    else: page.get_by_role('button', name='Preencher novo formulário',exact=True).click()
     return page.locator('#planning dialog.pl-dialog').first
 
 def form_journey(page):
@@ -172,11 +174,11 @@ def monthly_journey(page):
     page.locator('#planning [data-pl-account]').select_option(seeded['id'])
     surface = page.locator('#planning')
     for name in ['Registrar rentabilidade', 'Registrar aporte', 'Registrar saque']:
-        check(surface.get_by_role('button', name=name, exact=True).is_visible(),
-              'Preenchimento mensal preserves source button ' + name)
+        check(not surface.get_by_role('button', name=name, exact=True).is_visible(),
+              'Monthly cells replace the duplicate source button '+name)
     # The approved compact presentation replaces18 simultaneous headers with
     # seven/three principal columns. All source values remain reachable by month.
-    from planning_compact_table_test import monthly_geometry, detail_values
+    from planning_compact_table_test import monthly_geometry, detail_values, go_to_month
     monthly_geometry(page)
     presentation_before = page.evaluate('JSON.stringify(JPWPlanning.queries.snapshot())')
     rows = page.evaluate('''({id,month})=>JPWPlanning.queries.sheetView({accountId:id,month,
@@ -184,20 +186,22 @@ def monthly_journey(page):
     check(len(rows) == 120, 'compact table retains all120 source months')
     for row in rows:
         detail_values(page, row)
+    go_to_month(page, seeded['month'])
+    options=surface.locator('[data-pl-table-options]')
+    if not options.evaluate('e=>e.open'): options.locator('summary').click()
     surface.locator('[data-pl-month]').select_option(seeded['month'])
     check(page.evaluate('JSON.stringify(JPWPlanning.queries.snapshot())') == presentation_before,
           'every removed source column remains accessible per month without financial writes')
     before = page.evaluate('JSON.stringify(JPWPlanning.queries.snapshot())')
-    surface.get_by_role('button', name='Registrar rentabilidade', exact=True).click()
-    dialog = surface.locator('dialog.pl-dialog').first
-    check('Qual é o mês do resultado?' in dialog.inner_text(),
-          'result questionnaire begins with the source month question')
-    dialog.locator('[data-pl-submit]').click()
-    check('TOTAL' in dialog.inner_text() or 'total' in dialog.inner_text(),
-          'rentabilidade asks the total month result without deposits or withdrawals')
-    check('aportes' in dialog.inner_text().lower() and 'retiradas' in dialog.inner_text().lower(),
+    surface.locator('[data-pl-inline-open=result][data-pl-inline-month="'+seeded['month']+'"]').click()
+    dialog = surface.locator('dialog.pl-inline-popup[open]')
+    check(dialog.locator('[name=value]').is_visible() and dialog.locator('select').count()==0,
+          'result cell directly opens one monetary field for the selected month')
+    check('total' in dialog.inner_text().lower(),
+          'result asks the total month amount without deposits or withdrawals')
+    check('aportes' in dialog.inner_text().lower() and 'saques' in dialog.inner_text().lower(),
           'result instructions exclude the two cash-flow kinds')
-    dialog.locator('[data-pl-action=close]').first.click()
+    dialog.locator('[data-pl-action=inline-cancel]').click()
     check(page.evaluate('JSON.stringify(JPWPlanning.queries.snapshot())') == before,
           'canceling a result questionnaire preserves all financial records')
 

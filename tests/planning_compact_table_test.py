@@ -12,12 +12,12 @@ def monthly_geometry(page):
         visible=el=>!!el.getClientRects().length&&getComputedStyle(el).visibility!=='hidden',
         rect=el=>{const r=el.getBoundingClientRect();return {left:r.left,right:r.right,width:r.width};},
         headers=[...table.querySelectorAll('thead th')].filter(visible),
-        rows=[...table.querySelectorAll('[data-pl-grid-month]')];
+        rows=[...table.querySelectorAll('[data-pl-grid-month]')],calendarRows=[...table.querySelectorAll('[data-pl-calendar-month]')];
       return {width:viewport.clientWidth,viewport:innerWidth,mode:root?.dataset.plMonthlyLayout,
         wrapper:rect(viewport),table:rect(table),client:viewport.clientWidth,scroll:viewport.scrollWidth,
         shell:{client:shell.clientWidth,scroll:shell.scrollWidth},
         headers:headers.map(el=>el.textContent.trim()),
-        rows:rows.map(el=>({month:el.dataset.plGridMonth,cells:[...el.children].filter(visible).length})),
+        rows:rows.map(el=>({month:el.dataset.plGridMonth,cells:[...el.children].filter(visible).length})),calendarRows:calendarRows.map(el=>({month:el.dataset.plCalendarMonth,cells:[...el.children].filter(visible).length,outside:el.hasAttribute('data-pl-outside-plan-month'),controls:el.querySelectorAll('button,input,select,textarea,a,[tabindex]').length})),
         truncated:[...table.querySelectorAll('td,th,button,input,select,[data-pl-month-details] *')]
           .filter(visible).filter(el=>getComputedStyle(el).textOverflow==='ellipsis'||
             el.scrollWidth>el.clientWidth+1&&['hidden','clip'].includes(getComputedStyle(el).overflowX))
@@ -25,13 +25,20 @@ def monthly_geometry(page):
         details:[...table.querySelectorAll('[data-pl-month-details]')].filter(visible)
           .map(el=>({box:rect(el),client:el.clientWidth,scroll:el.scrollWidth}))};
     }''')
-    expected = 7 if data['width'] >= 900 else 3
+    expected = 8 if data['width'] >= 900 else 4
     assert len(data['headers']) == expected, ('monthly visible columns', expected, data)
-    assert data['mode'] == ('wide' if expected == 7 else 'compact'), ('monthly mode follows useful width', data)
-    expected_names = ['Mês', 'Saldo inicial', 'Resultado', 'Saque', 'Aporte', 'Patrimônio', 'Finalizado'] if expected == 7 else ['Mês', 'Resultado', 'Patrimônio']
+    assert data['mode'] == ('wide' if expected == 8 else 'compact'), ('monthly mode follows useful width', data)
+    expected_names = ['Mês', 'Saldo inicial', 'Resultado · %', 'Resultado · US$', 'Saque', 'Aporte', 'Patrimônio', 'Finalizado'] if expected == 8 else ['Mês', 'Resultado · %', 'Resultado · US$', 'Patrimônio']
     assert all(name in actual for name, actual in zip(expected_names, data['headers'])), ('approved header order', data)
-    assert len(data['rows']) == 120 and len({r['month'] for r in data['rows']}) == 120, ('exactly120distinctmonths', data)
+    chosen = page.locator('[data-pl-year-current]').inner_text()
+    expected_months = page.evaluate('y=>JPWPlanning.queries.account(document.querySelector("[data-pl-account]").value).plan.startMonth', chosen)
+    first = expected_months
+    last = page.evaluate('m=>JPWPlanning.engine.addMonths(m,119)', first)
+    expected_count = sum(1 for month in range(1,13) if first <= chosen+'-'+str(month).zfill(2) <= last)
+    assert len(data['rows']) == expected_count and len({r['month'] for r in data['rows']}) == expected_count and all(r['month'].startswith(chosen+'-') for r in data['rows']), ('exactly the distinct months of the selected civil year', data)
     assert all(r['cells'] == expected for r in data['rows']), ('row/header alignment', data)
+    assert len(data['calendarRows'])==12 and len({r['month'] for r in data['calendarRows']})==12 and all(r['month'].startswith(chosen+'-') for r in data['calendarRows']), ('all12calendar months',data)
+    assert all(r['cells']==expected and (not r['outside'] or r['controls']==0) for r in data['calendarRows']), ('outside months keep column alignment without controls',data)
     assert data['scroll'] <= data['client'] + 1, ('monthly horizontal overflow', data)
     assert data['table']['width'] <= data['wrapper']['width'] + 1, ('wide table hidden by overflow CSS', data)
     assert data['shell']['scroll'] <= data['shell']['client'] + 1, ('monthly shell horizontal overflow', data)
@@ -42,7 +49,20 @@ def monthly_geometry(page):
         assert detail['scroll'] <= detail['client'] + 1, ('detail horizontal overflow', detail)
     return data
 
+def go_to_month(page, month):
+    chosen = page.locator('[data-pl-year-current]')
+    while chosen.inner_text() != month[:4]:
+        direction = 'Próximo ano' if chosen.inner_text() < month[:4] else 'Ano anterior'
+        page.get_by_role('button', name=direction, exact=True).click()
+    row = page.locator('[data-pl-grid-month="'+month+'"]')
+    if not row.is_visible():
+        options = page.locator('[data-pl-table-options]')
+        if not options.evaluate('e=>e.open'): options.locator('summary').click()
+        page.locator('[data-pl-month]').select_option('')
+        page.locator('[data-pl-period]').select_option('all')
+
 def open_details(page, month, keyboard=False, touch=False):
+    go_to_month(page, month)
     trigger = page.locator('#planning [data-pl-select-month="' + month + '"]')
     assert trigger.count() == 1, ('one month details trigger', month)
     if trigger.get_attribute('aria-expanded') != 'true':
@@ -76,7 +96,7 @@ def future_input_values(page, row):
         assert control.count() == 1 and control.is_visible(), ('accessible unique future cell', row['month'], field)
         actual = control.get_attribute('data-pl-premise-value')
         assert actual == value, ('future cell preserves read-model value including blank/zero', row['month'], field, value, actual)
-        displayed = control.locator('[data-pl-month-value=rate]').inner_text() if field == 'rate' else control.inner_text()
+        displayed = page.locator('[data-pl-grid-month="'+row['month']+'"] [data-pl-month-value=rate]').inner_text() if field == 'rate' else control.locator('.pl-cell-content').inner_text()
         expected_display = page.evaluate("([r,f])=>f==='rate'?(r.provisional?'—':(r.rate*100).toLocaleString('pt-BR',{maximumFractionDigits:2})+'%'):(r.contributionBlank?'—':new Intl.NumberFormat('pt-BR',{style:'currency',currency:'USD'}).format(r.contributionUsd))", [row, field])
         assert normalized(displayed) == normalized(expected_display), ('readonly future cell displays the correct model value', row['month'], field, displayed, expected_display)
         observed[field] = {'expected': value, 'actual': actual, 'displayed': displayed}
@@ -88,8 +108,8 @@ def normalized(text):
 def bound_value(locator, field, expected, identity, strip_rate_label=False):
     """Check a value in its own actual container; equal values elsewhere cannot pass."""
     observed = locator.evaluate_all('''(els,stripRateLabel)=>els.map(el=>{
-      if(!stripRateLabel)return el.innerText;
-      const copy=el.cloneNode(true);copy.querySelectorAll('.pl-rate-label').forEach(n=>n.remove());return copy.textContent;
+      const copy=el.cloneNode(true);copy.querySelectorAll('.pl-cell-chevron').forEach(n=>n.remove());if(!stripRateLabel)return copy.innerText;
+      copy.querySelectorAll('.pl-rate-label').forEach(n=>n.remove());return copy.textContent;
     })''', strip_rate_label)
     assert len(observed) == 1 and locator.is_visible(), ('one accessible value container', identity, field, len(observed))
     actual = observed[0]
@@ -108,17 +128,26 @@ def month_field_values(page, row, principal, details, mode, expected, future_val
     scopes = '[data-pl-grid-month="' + identity + '"] [data-pl-month-value="{key}"],[data-pl-month-details="' + identity + '"] [data-pl-month-value="{key}"]'
     for key, model_key in [('open', 'openUsd'), ('withdrawal', 'withdrawalUsd')]:
         values[model_key] = bound_value(page.locator(scopes.format(key=key)), model_key, expected[model_key], identity)
-    if future_values is None:
+    if future_values is None and not expected.get('missingResult'):
         values['rate'] = bound_value(page.locator(scopes.format(key='rate')), 'rate', expected['rate'], identity, strip_rate_label=True)
+    if future_values is None:
         values['contributionUsd'] = bound_value(page.locator(scopes.format(key='contribution')), 'contributionUsd', expected['contributionUsd'], identity)
-    finalized = page.locator('[data-pl-finalized-month="' + identity + '"]')
+    finalized = page.locator('[data-pl-check-month="' + identity + '"]')
     assert finalized.count() == 1 and finalized.is_visible(), ('one accessible finalization control', identity)
-    assert finalized.input_value() == ('Sim' if row['finalized'] else 'Não'), ('finalization control value', identity)
+    assert finalized.get_attribute('aria-checked') == ('true' if row['finalized'] else 'false'), ('finalization control value', identity)
     cells = principal.locator(':scope > th,:scope > td')
-    result_index, balance_index = (2, 5) if mode == 'wide' else (1, 2)
+    result_index, balance_index = (3, 6) if mode == 'wide' else (2, 3)
     for index, usd_key, brl_key in [(result_index, 'resultUsd', 'resultBrl'), (balance_index, 'closeUsd', 'closeBrl')]:
+        if index == result_index and expected.get('missingResult'):
+            assert normalized(cells.nth(index).locator('.pl-cell-content').inner_text()) == 'Preencher'
+            continue
         values[usd_key] = bound_value(cells.nth(index).locator('.pl-money-primary'), usd_key, expected[usd_key], identity)
-        values[brl_key] = bound_value(cells.nth(index).locator('.pl-money-secondary'), brl_key, expected[brl_key], identity)
+        if index == result_index and expected[brl_key] == '—':
+            assert cells.nth(index).locator('.pl-money-secondary').count() == 0, ('no unlabeled unavailable FX dash', identity)
+            assert 'Equivalente em reais indisponível' in cells.nth(index).locator('button').get_attribute('aria-description'), ('accessible unavailable FX explanation', identity)
+            values[brl_key] = {'expected': '—', 'actual': 'unavailable; explanation on result control'}
+        else:
+            values[brl_key] = bound_value(cells.nth(index).locator('[data-pl-balance-brl]' if index==balance_index else '.pl-money-secondary'), brl_key, expected[brl_key], identity)
     labels = {'paidBrl': 'Pago no mês', 'fxVariation': 'Variação cambial',
               'costCoverage': 'Cobertura', 'costStatus': 'Situação do custo'}
     for key, label in labels.items():
@@ -160,10 +189,22 @@ def detail_values(page, row):
         closeBrl:money(r.closeBrl,'BRL'),paidBrl:money(r.paidBrl,'BRL'),fxVariation:percent(r.fxVariation),
         rate:percent(r.rate),costCoverage:percent(r.costCoverage),costStatus:r.costStatus};
     }''', row)
+    filled = page.evaluate('m=>{const a=JPWPlanning.queries.snapshot().accounts.find(a=>a.id===document.querySelector("[data-pl-account]").value);return JPWPlanning.monthlyInputs.status(a.plan,m)}', row['month'])
+    display_balance = page.evaluate('m=>{const a=JPWPlanning.queries.snapshot().accounts.find(a=>a.id===document.querySelector("[data-pl-account]").value);return JPWPlanning.monthlyView.balances(a.plan,new Date().toISOString().slice(0,7),{quote:JPWMarket.usdBrl.get()})[m]}', row['month'])
+    balance_formatted = page.evaluate("b=>{const f=(v,c='USD')=>Number.isFinite(v)?new Intl.NumberFormat('pt-BR',{style:'currency',currency:c}).format(v):'—';return {openUsd:f(b.openUsd),closeUsd:f(b.closeUsd),closeBrl:f(b.closeBrl,'BRL')}}", display_balance)
+    expected.update(balance_formatted)
+    if future_values is None: expected['contributionUsd'] = page.evaluate("v=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'USD'}).format(v)", row['actualContributionUsd'])
+    if future_values is None and not row['finalized']:
+        if not filled['result']:
+            expected['missingResult'] = True
+            for k in ['rate','resultUsd','resultBrl']: expected[k] = 'Preencher'
+        if not filled['withdrawal']: expected['withdrawalUsd'] = 'Preencher'
+        if not filled['contribution']: expected['contributionUsd'] = 'Preencher'
     normalize = lambda s: ' '.join(str(s).replace('\u00a0', ' ').split())
     # The union includes principal values; compact details supply removed fields.
     text = normalize(principal.inner_text() + ' ' + labels)
     for key, value in expected.items():
+        if key == 'missingResult': continue
         if key in ['rate', 'contributionUsd'] and future_values is not None:
             continue  # Every future row was checked against its actual inputs.
         assert normalize(value) in text, ('read-model value preserved in principal/detail', row['month'], key, value, text)
@@ -173,9 +214,9 @@ def detail_values(page, row):
           value.toLocaleString('pt-BR',{maximumFractionDigits:4}),
           new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(value)]:['—']''', row[key])
         assert any(normalize(value) in text for value in candidates), ('exchange reference value preserved', row['month'], key, candidates, text)
-    control = details.locator('[data-pl-finalized-month="' + row['month'] + '"]')
+    control = details.locator('[data-pl-check-month="' + row['month'] + '"]')
     if control.count():
-        assert control.input_value() == ('Sim' if row['finalized'] else 'Não'), ('finalization value', row['month'])
+        assert control.get_attribute('aria-checked') == ('true' if row['finalized'] else 'false'), ('finalization value', row['month'])
     bound = month_field_values(page, row, principal, details, mode, expected, future_values)
     return {'month': row['month'], 'mode': mode, 'labels': PRIMARY_LABELS + DETAIL_LABELS,
             'read_model_values': expected, 'future_input_values': future_values, 'bound_fields': bound}

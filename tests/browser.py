@@ -55,7 +55,7 @@ with sync_playwright() as pw:
      page.screenshot(path=str(OUT/f'consolidado-{theme}-{width}.png'),full_page=True)
      page.get_by_role('tab',name='Preenchimento mensal',exact=True).click();page.wait_for_timeout(80);geometry(page)
      page.screenshot(path=str(OUT/f'mensal-{theme}-{width}.png'),full_page=True)
-   page.set_viewport_size({'width':320,'height':560});page.get_by_role('tab',name='Comece aqui',exact=True).click();page.get_by_role('button',name='Preencher o formulário',exact=True).click();page.wait_for_timeout(50);geometry(page);page.keyboard.press('Escape')
+   page.set_viewport_size({'width':320,'height':560});page.get_by_role('tab',name='Comece aqui',exact=True).click();page.get_by_role('button',name='Preencher novo formulário',exact=True).click();page.wait_for_timeout(50);geometry(page);page.keyboard.press('Escape')
    assert not errors,errors;assert not network,network
   finally:ctx.close()
  check('VISUAL-two themes four widths, monthly/consolidated,320low-height modal and44px targets',visual)
@@ -80,7 +80,7 @@ with sync_playwright() as pw:
  def first_unknown():
   ctx,page,errors,network=boot()
   try:
-   page.get_by_role('button',name='Preencher o formulário',exact=True).click();page.locator('#pl-native-openProfiles').click();page.locator('[data-pl-choose-profile=base]').click()
+   page.get_by_role('button',name='Preencher novo formulário',exact=True).click();page.locator('#pl-native-openProfiles').click();page.locator('[data-pl-choose-profile=base]').click()
    page.locator('#pl-native-mes').select_option('11');page.locator('#pl-native-saldo').fill('1234');page.locator('#pl-native-aporte').fill('100');page.locator('#pl-native-sonhoMoeda').select_option('USD');page.locator('#pl-native-sonhoBRL').fill('300')
    page.locator('dialog[open] [data-pl-submit]').click()
    page.evaluate("""()=>{const get=Storage.prototype.getItem,set=Storage.prototype.setItem;window.__mainWritten=false;window.__get=get;window.__set=set;Storage.prototype.getItem=function(k){if(k===PlanningStore.KEY&&__mainWritten)throw Error('synthetic real readback failure');return get.call(this,k)};Storage.prototype.setItem=function(k,v){const r=set.call(this,k,v);if(k===PlanningStore.KEY)__mainWritten=true;return r}}""")
@@ -112,7 +112,7 @@ with sync_playwright() as pw:
  def unavailable():
   ctx,page,errors,network=boot(fx=False)
   try:
-   page.get_by_role('button',name='Preencher o formulário',exact=True).click();assert page.locator('dialog[open]').is_visible();assert page.evaluate('JPWPlanning.queries.snapshot().accounts.length')==0
+   page.get_by_role('button',name='Preencher novo formulário',exact=True).click();assert page.locator('dialog[open]').is_visible();assert page.evaluate('JPWPlanning.queries.snapshot().accounts.length')==0
    page.keyboard.press('Escape');page.locator('#data-button').click();before=page.evaluate('JSON.stringify(PlanningStore.exportDocument())');bad=json.dumps({'S':{'patrimonialPlanning':{}},'workspace':{}}).encode();page.locator('#import-file').set_input_files({'name':'jp-wealth-backup.json','mimeType':'application/json','buffer':bad});page.wait_for_function("document.querySelector('#data-message').textContent.includes('Arquivo recusado')");assert page.evaluate('JSON.stringify(PlanningStore.exportDocument())')==before
    assert not errors,errors
   finally:ctx.close()
@@ -129,5 +129,20 @@ with sync_playwright() as pw:
     assert not errors,errors
    finally:ctx.close()
  check('NATIVE200-real browser zoom,light/dark,monthly fields and44px targets',native)
+ def recovery_capacity():
+  for own in [False,True]:
+   ctx,page,errors,network=boot()
+   try:
+    reference.seed(page)
+    seeded=page.evaluate("""own=>{const main=localStorage.getItem(PlanningStore.KEY),copy=PlanningStore.exportRecovery().recoveryCopies[0],item=PlanningStore.inspectRecovery(copy.raw);if(own)localStorage.setItem(copy.key,JSON.stringify({...item,previousRaw:main,candidateRaw:main}));else for(let i=0;i<8;i++)localStorage.setItem(PlanningStore.RECOVERY_PREFIX+'legacy-capacity-'+i,JSON.stringify({...item,owner:'legacy-capacity-'+i,previousRaw:main,candidateRaw:main}));window.__auditCopies=Object.fromEntries(Object.entries(localStorage).filter(([k])=>k.startsWith(PlanningStore.RECOVERY_PREFIX)));const original=Storage.prototype.setItem;window.__capacityMax=Object.values(localStorage).reduce((n,v)=>n+v.length,0)+(own?30000:500);let blockOnce=own;Storage.prototype.setItem=function(k,v){if(blockOnce&&k===copy.key){blockOnce=false;throw new DOMException('Synthetic journal refusal','QuotaExceededError');}const total=Object.keys(localStorage).filter(key=>key!==k).reduce((n,key)=>n+localStorage.getItem(key).length,0)+String(v).length;if(total>window.__capacityMax)throw new DOMException('Synthetic capacity','QuotaExceededError');return original.call(this,k,v)};return main}""",own)
+    page.get_by_role('button',name='Gerenciar ▾',exact=True).click();page.get_by_role('menuitem',name='Adicionar nova conta',exact=True).click();d=page.locator('dialog[data-pl-submit=create]');page.locator('#pl-native-ano').fill('2026');page.locator('#pl-native-mes').select_option('11');page.locator('#pl-native-saldo').fill('1234');page.locator('#pl-native-aporte').fill('100');page.locator('#pl-native-openProfiles').click();page.locator('[data-pl-choose-profile=base]').click();page.locator('#pl-native-custoMoeda').select_option('USD');page.locator('#pl-native-custoValor').fill('150');page.locator('#pl-native-sonhoMoeda').select_option('USD');page.locator('#pl-native-sonhoBRL').fill('300');d.locator('[data-pl-submit]').click();d.locator('[data-pl-submit]').click();assert d.is_visible() and d.locator('[data-pl-submit]').is_disabled();banner=d.locator('[data-pl-draft-stale]');assert 'recusou' in banner.inner_text() and 'Os dados mudaram' not in banner.inner_text();assert page.evaluate('localStorage.getItem(PlanningStore.KEY)')==seeded;assert page.evaluate('JPWPlanning.queries.snapshot().accounts.length')==1;page.screenshot(path=str(OUT/f'capacity-refused-{own}.png'))
+    banner.get_by_role('button',name='Compactar cópias de recuperação',exact=True).click();assert page.evaluate('localStorage.getItem(PlanningStore.KEY)')==seeded and page.evaluate('JPWPlanning.queries.snapshot().accounts.length')==1
+    if own:
+     assert page.locator('#pl-native-saldo').input_value()=='1234' and page.locator('[data-pl-native-fields]').is_visible();assert not d.locator('[data-pl-submit]').is_disabled();page.screenshot(path=str(OUT/'capacity-draft-preserved.png'));d.locator('[data-pl-submit]').click();assert 'Confira antes de salvar' in d.inner_text();d.locator('[data-pl-submit]').click();assert page.evaluate('JPWPlanning.queries.snapshot().accounts.length')==2;assert 'Conta criada' in d.inner_text();page.screenshot(path=str(OUT/'capacity-created.png'));d.get_by_role('button',name='Fechar e manter rascunho',exact=True).click();page.reload();page.wait_for_selector('[data-pl-start]');assert page.evaluate('PlanningStore.status().status')=='READY' and page.evaluate('JPWPlanning.queries.snapshot().accounts.length')==2
+    else:
+     assert d.locator('[data-pl-submit]').is_disabled();assert 'nenhum espaço foi liberado' in d.inner_text() and 'outras sessões' in d.inner_text();assert page.evaluate('Object.entries(__auditCopies).every(([k,v])=>localStorage.getItem(k)===v)');d.get_by_role('button',name='Voltar e editar',exact=True).click();assert page.locator('#pl-native-saldo').input_value()=='1234';page.screenshot(path=str(OUT/'capacity-foreign-preserved.png'))
+    assert not errors,errors;assert not network,network
+   finally:ctx.close()
+ check('CAPACITY-only owned copies compact; foreign quota stays refused with draft intact; fresh explicit own review creates once',recovery_capacity)
  browser.close()
 server.shutdown();server.server_close();report['status']='PASS' if report['checks'] and not report['failures'] else 'PRODUCT_FAIL';(OUT/'result.json').write_text(json.dumps(report,ensure_ascii=False,indent=2));print(json.dumps({'status':report['status'],'checks':len(report['checks']),'failures':report['failures']},ensure_ascii=False));raise SystemExit(report['status']!='PASS')

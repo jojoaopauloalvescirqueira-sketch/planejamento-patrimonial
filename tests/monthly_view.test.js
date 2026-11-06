@@ -1,0 +1,20 @@
+'use strict';
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const c={structuredClone,console,localStorage:{getItem(){throw Error('no read allowed')},setItem(){throw Error('no write allowed')}}};c.window=c;vm.createContext(c);
+for(const f of ['planning-engine.js','monthly-inputs.js','monthly-view.js'])vm.runInContext(fs.readFileSync('dist/assets/'+f,'utf8'),c);
+const {engine:e,monthlyInputs:inputs,monthlyView:view}=c.JPWPlanning,month='2026-11',at='2026-11-05T12:00:00Z',quote={rate:5,referenceDate:'2026-11-05',fetchedAt:at,source:'Frankfurter'};let count=0;
+const plan=(changes={})=>e.createPlan({startMonth:month,initialUsd:1000,profileId:'base',monthlyContributionUsd:200,goals:{adequate:null,ideal:{value:100,currency:'USD'}},...changes},{id:'synthetic',now:at});
+const flow=(month,usd,brl)=>({id:Math.random().toString(),month,usd,brl,revision:1});
+function test(name,fn){fn();console.log('PASS VIEW '+(++count)+' '+name)}
+function read(p){const raw=JSON.stringify(p),r=view.balances(p,month,{quote});assert.equal(JSON.stringify(p),raw,'reading never modifies records');return r;}
+test('1000 empty stays1000 partial and subsequent months wait; legacy arithmetic stays isolated',()=>{const p=plan(),r=read(p);assert.equal(r[month].closeUsd,1000);assert.equal(r[month].closeBrl,5000);assert.equal(r[month].status,'PARTIAL');assert.equal(e.timeline(p,{month})[0].closeUsd,1230);assert.equal(r['2026-12'].status,'WAITING_CLOSURE');assert.equal(r['2026-12'].openUsd,null);assert.equal(Object.keys(p.results).length,0);assert.equal(p.contributions.length,0)});
+test('recorded result excludes planned contribution',()=>{const p=plan();p.results[month]={usd:50,revision:1};assert.equal(read(p)[month].closeUsd,1050)});
+test('actual contributions exclude unearned result',()=>{const p=plan();p.contributions=[flow(month,100,500),flow(month,30,150)];assert.equal(read(p)[month].closeUsd,1130)});
+test('actual withdrawals are deducted even with unfilled result',()=>{const p=plan();p.withdrawals=[flow(month,100)];assert.equal(read(p)[month].closeUsd,900)});
+test('negative result and mixed actual flows use the same engine formula',()=>{const p=plan();p.results[month]={usd:-20,revision:1};p.contributions=[flow(month,100,500)];p.withdrawals=[flow(month,30)];assert.equal(read(p)[month].closeUsd,1050);assert.equal(read(p)[month].status,'RECORDED')});
+test('explicit zeros never turn planned200 into an actual contribution',()=>{const p=plan();p.results[month]={usd:0,revision:1};inputs.confirm(p,month,'contribution',at);inputs.confirm(p,month,'withdrawal',at);assert.equal(read(p)[month].closeUsd,1000);assert.equal(read(p)[month].status,'RECORDED');assert.equal(p.closures[month],undefined)});
+test('closed months preserve their exact real value',()=>{const p=plan();p.results[month]={usd:20,revision:1};p.closures[month]={confirmed:true,confirmFlows:true,revision:1};const r=read(p)[month];assert.equal(r.status,'CONFIRMED');assert.equal(r.closeUsd,1020)});
+test('unconfirmed preceding month cannot supply a projected opening as real',()=>{const p=plan({startMonth:'2026-10'}),r=read(p);assert.equal(r['2026-10'].closeUsd,1000);assert.equal(r[month].status,'WAITING_CLOSURE');assert.equal(r[month].openUsd,null);assert.equal(r[month].closeUsd,null)});
+test('confirmed predecessor supplies actual opening; reopen removes certainty',()=>{const p=plan({startMonth:'2026-10'});p.results['2026-10']={usd:20,revision:1};p.closures['2026-10']={confirmed:true,confirmFlows:true,revision:1};assert.equal(read(p)[month].closeUsd,1020);p.closures['2026-10'].confirmed=false;assert.equal(read(p)[month].closeUsd,null)});
+test('noFX and impossible partial balance stay unknown rather than a fabricated zero',()=>{const p=plan();assert.equal(view.balances(p,month)[month].closeBrl,null);p.withdrawals=[flow(month,1100)];assert.equal(read(p)[month].closeUsd,null);assert.equal(read(p)[month].status,'NOT_COMPUTABLE')});
+console.log('PASS '+count+' monthly-view contract groups');

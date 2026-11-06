@@ -24,7 +24,7 @@ function boot(storage = new Storage()) {
     addEventListener: (name, fn) => { events[name] = fn; }};
   c.window = c;
   vm.createContext(c);
-  for (const name of ['planning-engine.js', 'storage.js', 'planning-state.js', 'backup.js']) {
+  for (const name of ['planning-engine.js', 'monthly-inputs.js', 'annual-review.js', 'storage.js', 'planning-state.js', 'backup.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, 'dist/assets', name), 'utf8'), c, {filename: name});
   }
   return {c, storage, events, store: c.PlanningStore, backup: c.PlanningBackup, api: c.JPWPlanning};
@@ -93,7 +93,7 @@ test('competing raw after write is unknown rather than automatic overwrite retry
   assert.equal(create(h).status, 'UNKNOWN'); assert.equal(h.store.status().status, 'UNKNOWN'); assert.deepEqual(clone(h.c.S), {});
 });
 test('corrupt/future/foreign wrappers stay opaque and blocked', () => {
-  for (const raw of ['{bad', JSON.stringify({format:'planejamento_patrimonial_state',schemaVersion:2,revision:0,document:{},writeId:'future'}),
+  for (const raw of ['{bad', JSON.stringify({format:'planejamento_patrimonial_state',schemaVersion:99,revision:0,document:{},writeId:'future'}),
       JSON.stringify({format:'planejamento_patrimonial_state',schemaVersion:1,revision:0,document:{},writeId:'x',extra:true}),
       wrapper({forex:{}})]) {
     const storage = new Storage(); storage.map.set(KEY, raw); const h = boot(storage);
@@ -199,7 +199,7 @@ test('export captures confirmed base, not unrelated unconfirmed RAM', () => {
 });
 test('malformed, unknown version, JP fullbackup, invalid document and draft authority are rejected before writes', () => {
   const h=boot(); create(h); const good=clone(h.backup.create()), raw=h.storage.getItem(KEY), calls=h.storage.calls.length;
-  const bad=[{}, {...good,schemaVersion:2}, {...good,format:'jpwealth_portable_backup'}, {...good,financial:{}},
+  const bad=[{}, {...good,schemaVersion:99}, {...good,format:'jpwealth_portable_backup'}, {...good,financial:{}},
     {...good,document:{accounts:[]}}, {...good,document:{patrimonialPlanning:{schemaVersion:2}}},
     {...good,preferences:{theme:'dark'}}, {...good,drafts:[{label:'x',text:'x',token:{}}]}];
   for(const value of bad){assert.throws(()=>h.backup.inspect(JSON.stringify(value)));assert.equal(h.backup.restore(value,{expectedEpoch:h.store.epoch()}).status,'REFUSED');}
@@ -220,5 +220,46 @@ test('backup export detects a newly competing raw and cannot certify stale data'
 test('revision overflow refuses safely',()=>{
   const storage=new Storage();storage.map.set(KEY,wrapper({},Number.MAX_SAFE_INTEGER));const h=boot(storage);
   assert.equal(create(h).status,'REFUSED');assert.equal(JSON.parse(storage.getItem(KEY)).revision,Number.MAX_SAFE_INTEGER);
+});
+test('explicit lossless compaction preserves keys, exact Unicode snapshots and financial base; foreign copies stay byte-identical',()=>{
+ const h=boot();create(h,'Acentos é 😀 '+String.fromCharCode(0xE000)+' \\ "');const main=h.storage.getItem(KEY),ownKey=[...h.storage.map.keys()].find(k=>k.startsWith(PREFIX)),seed=h.store.inspectRecovery(h.storage.getItem(ownKey));
+ h.storage.map.set(ownKey,JSON.stringify({...seed,previousRaw:main,candidateRaw:main}));
+ for(let i=0;i<8;i++)h.storage.map.set(PREFIX+'legacy-'+i,JSON.stringify({...seed,owner:'legacy-'+i,previousRaw:main,candidateRaw:main}));
+ const keys=[...h.storage.map.keys()].sort(),snapshots=[...h.storage.map].filter(([k])=>k.startsWith(PREFIX)).map(([k,v])=>[k,v,h.store.inspectRecovery(v)]),epoch=h.store.epoch();
+ const r=h.store.compactRecovery();assert.equal(r.count,1);assert.equal(r.skippedForeign,8);assert.ok(r.savedChars>10000);assert.deepEqual([...h.storage.map.keys()].sort(),keys);assert.equal(h.storage.getItem(KEY),main);assert.equal(h.store.epoch(),epoch);
+ for(const [k,raw,item]of snapshots){assert.deepEqual(clone(h.store.inspectRecovery(h.storage.getItem(k))),clone(item));if(k!==ownKey)assert.equal(h.storage.getItem(k),raw);}
+ const beforeCalls=h.storage.calls.length,reopened=boot(h.storage);assert.equal(h.storage.calls.length,beforeCalls,'opening never migrates');const freshEpoch=reopened.store.epoch(),noChange=reopened.store.compactRecovery();assert.equal(noChange.count,0);assert.equal(noChange.savedChars,0);assert.equal(noChange.skippedForeign,9);assert.equal(h.storage.calls.length,beforeCalls);assert.equal(reopened.store.epoch(),freshEpoch);assert.equal(reopened.store.status().status,'READY');assert.match(reopened.store.status().reason,/nenhum espaço foi liberado/);
+});
+test('foreign recovery quota stays refused without deleting copies or silently retrying',()=>{
+ const h=boot();create(h);const main=h.storage.getItem(KEY),item=h.store.inspectRecovery([...h.storage.map].find(([k])=>k.startsWith(PREFIX))[1]);for(let i=0;i<8;i++)h.storage.map.set(PREFIX+'full-'+i,JSON.stringify({...item,owner:'full-'+i,previousRaw:main,candidateRaw:main}));
+ const originals=[...h.storage.map],max=originals.reduce((n,[,v])=>n+v.length,0)+500;h.storage.onSet=(k,v,s)=>{const total=[...s.map].filter(([key])=>key!==k).reduce((n,[,raw])=>n+raw.length,0)+v.length;if(total>max)throw Error('QuotaExceededError');};const token=h.api.queries.token();assert.equal(create(h,'Pending').storageReason,'RECOVERY_WRITE_REFUSED');const calls=h.storage.calls.length,r=h.store.compactRecovery();assert.equal(r.count,0);assert.equal(r.savedChars,0);assert.equal(r.skippedForeign,8);assert.equal(h.storage.calls.length,calls);assert.deepEqual([...h.storage.map],originals);assert.equal(h.c.S.patrimonialPlanning.accounts.length,1);assert.equal(h.api.commands.execute('createAccount',config(),token).status,'CONFLICT');assert.equal(create(h,'Reviewed again').storageReason,'RECOVERY_WRITE_REFUSED');assert.equal(h.storage.getItem(KEY),main);
+});
+test('own verified legacy recovery compacts and frees capacity; only explicit fresh review retries',()=>{
+ const h=boot();create(h);const main=h.storage.getItem(KEY),key=[...h.storage.map.keys()].find(k=>k.startsWith(PREFIX)),item=h.store.inspectRecovery(h.storage.getItem(key));h.storage.map.set(key,JSON.stringify({...item,previousRaw:main,candidateRaw:main}));
+ let blockRecoveryOnce=true;const max=[...h.storage.map.values()].reduce((n,v)=>n+v.length,0)+30000;h.storage.onSet=(k,v,s)=>{if(blockRecoveryOnce&&k===key){blockRecoveryOnce=false;throw Error('Synthetic journal quota');}const total=[...s.map].filter(([key])=>key!==k).reduce((n,[,raw])=>n+raw.length,0)+v.length;if(total>max)throw Error('QuotaExceededError');};const token=h.api.queries.token();assert.equal(create(h,'Pending').storageReason,'RECOVERY_WRITE_REFUSED');assert.equal(h.storage.getItem(KEY),main);const r=h.store.compactRecovery();assert.equal(r.count,1);assert.equal(r.skippedForeign,0);assert.ok(r.savedChars>10000);assert.equal(h.storage.getItem(KEY),main);assert.equal(h.c.S.patrimonialPlanning.accounts.length,1);assert.equal(h.api.commands.execute('createAccount',config(),token).status,'CONFLICT');assert.equal(create(h,'Reviewed again').status,'CONFIRMED');assert.equal(h.c.S.patrimonialPlanning.accounts.length,2);
+});
+test('malformed compact dictionaries, references and expansion bombs are blocked and preserved',()=>{
+ const h=boot();create(h);const valid=JSON.parse([...h.storage.map].find(([k])=>k.startsWith(PREFIX))[1]);assert.equal(valid.schemaVersion,2);
+ const cases=[{...valid,dictionary:[3]},{...valid,candidateRaw:valid.marker},{...valid,candidateRaw:valid.marker+String.fromCharCode(0xD6FF)}, {...valid,dictionary:['"'+'x'.repeat(1024*1024)+'"'],candidateRaw:(valid.marker+String.fromCharCode(0x100)).repeat(33)}];
+ for(const value of cases){const storage=new Storage();storage.map.set(KEY,h.storage.getItem(KEY));const text=JSON.stringify(value);storage.map.set(PREFIX+'bad',text);const x=boot(storage);assert.equal(x.store.status().status,'RECOVERY');assert.throws(()=>x.store.inspectRecovery(text));assert.equal(storage.getItem(PREFIX+'bad'),text);}
+});
+test('pending or opaque copies are never compacted, deleted or silently approved',()=>{
+ const h=boot();create(h);const main=h.storage.getItem(KEY),item=h.store.inspectRecovery([...h.storage.map].find(([k])=>k.startsWith(PREFIX))[1]);const pending=JSON.stringify({...item,outcome:'pending',candidateRaw:wrapper({},99,'pending')});h.storage.map.set(PREFIX+'pending',pending);h.storage.map.set(PREFIX+'opaque','{bad');const x=boot(h.storage);assert.equal(x.store.status().status,'RECOVERY');assert.throws(()=>x.store.compactRecovery());x.store.reload();x.store.compactRecovery();assert.equal(h.storage.getItem(PREFIX+'pending'),pending);assert.equal(h.storage.getItem(PREFIX+'opaque'),'{bad');assert.equal(h.storage.getItem(KEY),main);
+});
+test('compaction readback and concurrent base changes never claim success or modify the financial base',()=>{
+ function legacy(){const h=boot();create(h);const key=[...h.storage.map.keys()].find(k=>k.startsWith(PREFIX));h.storage.map.set(key,JSON.stringify(h.store.inspectRecovery(h.storage.getItem(key))));return {h,key,raw:h.storage.getItem(key),main:h.storage.getItem(KEY)};}
+ {const {h,key,raw,main}=legacy();h.storage.onSet=()=>{throw Error('quota');};assert.throws(()=>h.store.compactRecovery());assert.equal(h.storage.getItem(key),raw);assert.equal(h.storage.getItem(KEY),main);}
+ {const {h,key}=legacy();h.storage.onSet=(k,v,s)=>{s.map.set(k,v);throw Error('after write');};assert.equal(h.store.compactRecovery().count,1);assert.equal(boot(h.storage).store.status().status,'READY');}
+ {const {h,key,main}=legacy();let written=false;h.storage.onSet=k=>{if(k===key)written=true;};h.storage.onGet=k=>{if(k===key&&written)throw Error('readback');};assert.throws(()=>h.store.compactRecovery());assert.equal(h.store.status().status,'RECOVERY');assert.equal(h.storage.getItem(KEY),main);assert.notEqual(create(h).status,'CONFIRMED');}
+ {const {h,key}=legacy();const other=wrapper({},77,'competing');h.storage.onSet=(k,v,s)=>{if(k===key)s.map.set(KEY,other);};assert.throws(()=>h.store.compactRecovery());assert.equal(h.store.status().status,'CONFLICT');assert.equal(h.storage.getItem(KEY),other);}
+});
+test('audit: compaction cannot overwrite another instance recovery during a pending transition',()=>{
+ const storage=new Storage(),a=boot(storage);create(a);const key=[...storage.map.keys()].find(k=>k.startsWith(PREFIX)),original=JSON.stringify(a.store.inspectRecovery(storage.getItem(key)));storage.map.set(key,original);const b=boot(storage),foreignPending=JSON.stringify({...a.store.inspectRecovery(original),outcome:'pending',candidateRaw:wrapper({},99,'competing-pending')});let writes=0;
+ storage.onSet=(k,v,s)=>{if(k===key){writes++;s.map.set(key,foreignPending);}};
+ const result=b.store.compactRecovery();assert.equal(writes,0,'Must never write a foreign key; another owner can start a pending write after the last comparison');assert.equal(result.count,0);assert.equal(result.savedChars,0);assert.equal(result.skippedForeign,1);assert.equal(storage.getItem(key),original);
+ storage.onSet=null;storage.map.set(key,foreignPending);assert.equal(boot(storage).store.status().status,'RECOVERY');assert.equal(storage.getItem(key),foreignPending);
+});
+test('audit: own-key owner mismatch, pending and unreadable contents are preserved without writes',()=>{
+ for(const kind of ['owner','pending','opaque']){const h=boot();create(h);const key=[...h.storage.map.keys()].find(k=>k.startsWith(PREFIX)),item=h.store.inspectRecovery(h.storage.getItem(key));const raw=kind==='opaque'?'{unreadable':JSON.stringify({...item,previousRaw:h.storage.getItem(KEY),...(kind==='owner'?{owner:'another-runtime'}:{outcome:'pending'})});h.storage.map.set(key,raw);const calls=h.storage.calls.length,r=h.store.compactRecovery();assert.equal(r.count,0);assert.equal(r.savedChars,0);assert.equal(r.skippedForeign,kind==='owner'?1:0);assert.equal(h.storage.calls.length,calls);assert.equal(h.storage.getItem(key),raw);}
 });
 console.log('PASS storage/backup '+count+' groups');

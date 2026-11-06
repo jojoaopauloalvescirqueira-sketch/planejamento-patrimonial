@@ -45,7 +45,7 @@
   function envelope(){const document=sync();return document&&own(document,'patrimonialPlanning')?document.patrimonialPlanning:empty();}
   function errorsFor(value){
     if(!engine||typeof engine.validateEnvelope!=='function')return ['Motor de planejamento indisponível.'];
-    try{return engine.validateEnvelope(value);}catch(error){return ['Agregado de planejamento incompatível.'];}
+    try{return engine.validateEnvelope(value).concat(planning.monthlyInputs.validateEnvelope(value),planning.annualReview.validateEnvelope(value));}catch(error){return ['Agregado de planejamento incompatível.'];}
   }
   function accountById(value,id){return Array.isArray(value?.accounts)?value.accounts.find(account=>account.id===id)||null:null;}
   function currentMonth(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
@@ -141,23 +141,25 @@
   function history(plan,type,at,before,after,reason){
     plan.history.push({id:identity('planning_history'),type,at,reason:reason||'',before:before==null?null:clone(before),after:after==null?null:clone(after)});
   }
-  function reopenDependents(plan,month,at,reason){
-    for(const key of Object.keys(plan.closures).sort())if(key>=month&&plan.closures[key]?.confirmed===true){
+  function reopenMonthRecords(plan,month,at,reason){
+    for(const key of Object.keys(plan.closures).sort())if(key===month&&plan.closures[key]?.confirmed===true){
       const previous=clone(plan.closures[key]);
       plan.closures[key]={...previous,confirmed:false,revision:previous.revision+1,reopenedAt:at,reason,previous};
       history(plan,'closure-reopened',at,{month:key,...previous},{month:key,...plan.closures[key]},reason);
     }
   }
   function recalculate(plan){
-    const rows=engine.timeline(plan,{month:currentMonth(),quote:publicQuote()});
+    // Only effective, available openings can constrain actual balances.
+    // Blocked months retain explicit records without borrowing forecast funds.
+    const rows=engine.timeline(plan,{month:currentMonth(),quote:publicQuote(),balancePolicy:'confirmed-projection'});
     requireThat(Array.isArray(rows)&&rows.length===120,'Calendário do plano não calculável.');
-    for(const row of rows){
-      requireThat(finite(row.openUsd)&&finite(row.closeUsd)&&row.closeUsd>=0,'Os registros produzem saldo negativo ou saldo não calculável.');
-      const facts=own(plan.results,row.month)||plan.contributions.some(item=>item.month===row.month&&item.usd!==0)||
-        plan.withdrawals.some(item=>item.month===row.month&&item.usd!==0)||plan.closures[row.month]?.confirmed===true;
-      if(!facts)continue;
-      requireThat(row.openUsd!==0||!own(plan.results,row.month)||plan.results[row.month].usd===0,'Resultado diferente de zero exige saldo de abertura positivo.');
+    for(const row of rows)if(row.month<=currentMonth()&&row.projectionStatus!=='WAITING_CLOSURE'&&finite(row.openUsd)){
+      requireThat(finite(row.closeUsd)&&row.closeUsd>=0,'Os registros efetivos produzem saldo negativo ou não calculável em '+row.month+'. Confira este mês; previsões não financiam saques.');
+      requireThat(row.openUsd!==0||!own(plan.results,row.month)||plan.results[row.month].usd===0,'Resultado diferente de zero exige saldo de abertura positivo em '+row.month+'.');
     }
+    const recorded=engine.timeline(plan,{month:currentMonth(),balancePolicy:'confirmed-projection',recordValidation:true});
+    for(const row of recorded)if(row.month<=currentMonth()&&row.projectionStatus!=='WAITING_CLOSURE'&&finite(row.openUsd))requireThat(finite(row.closeUsd)&&row.closeUsd>=0,'Os registros efetivos produzem saldo negativo ou não calculável em '+row.month+'. Confira os registros deste mês.');
+    for(const row of rows)if(row.month>currentMonth()&&row.projectionStatus!=='WAITING_CLOSURE')requireThat(finite(row.openUsd)&&finite(row.closeUsd)&&row.closeUsd>=0,'Projeção não calculável em '+row.month+'.');
     return rows;
   }
   function applyFlow(plan,kind,input,at){
@@ -180,6 +182,7 @@
       ...(input.brl!==undefined&&input.brl!==null?{brl:input.brl}:{}),...(previous?{previous:clone(previous)}:{})};
     if(kind==='withdrawal'&&(input.brl===undefined||input.brl===null))delete item.brl;
     if(index<0)items.push(item);else items[index]=item;
+    planning.monthlyInputs.invalidate(plan,month,kind);
     history(plan,kind==='contribution'?'contribution-recorded':'withdrawal-recorded',at,previous,item,input.reason);
     return month;
   }
@@ -187,9 +190,11 @@
     try{
       assertSafeInput(input);const value=envelope(),issues=errorsFor(value);requireThat(!issues.length,issues.join(' '));
       const account=clone(accountById(value,input.accountId));requireThat(account&&account.active===true,'Conta ativa de planejamento não encontrada.');
+      const block=planning.annualReview.guard(account.plan,input.month);requireThat(!block,block?.message);
       const changed=applyFlow(account.plan,input.kind,input,now());
-      reopenDependents(account.plan,changed,now(),'Correção factual exige reconferência dos meses dependentes.');
-      const row=recalculate(account.plan).find(item=>item.month===input.month);
+      reopenMonthRecords(account.plan,changed,now(),'Alteração dos registros exige reconferência deste mês.');
+      recalculate(account.plan);
+      const row=engine.timeline(account.plan,{month:currentMonth(),quote:publicQuote(),balancePolicy:'confirmed-projection'}).find(item=>item.month===input.month);
       requireThat(!!row,'O mês não pertence ao plano desta conta.');
       const key=input.kind==='contribution'?'contributions':'withdrawals';
       const total=input.kind==='result'?row.resultUsd:account.plan[key].filter(item=>item.month===input.month).reduce((sum,item)=>sum+item.usd,0);
@@ -205,7 +210,7 @@
       const value=envelope(),issues=errorsFor(value);requireThat(!issues.length,issues.join(' '));
       const account=clone(accountById(value,input.accountId));requireThat(account&&account.active===true,'Conta ativa de planejamento não encontrada.');
       monthInPlan(account.plan,input.month);
-      const row=engine.timeline(account.plan,{month:currentMonth(),quote:publicQuote()}).find(item=>item.month===input.month);
+      const row=engine.timeline(account.plan,{month:currentMonth(),quote:publicQuote(),balancePolicy:'confirmed-projection'}).find(item=>item.month===input.month);
       requireThat(!!row,'O mês não pertence ao plano desta conta.');
       requireThat(input.unit!=='PERCENT'||finite(row.openUsd)&&row.openUsd>0,'Resultado percentual exige saldo de abertura disponível e positivo.');
       const usd=input.unit==='PERCENT'?Math.round(row.openUsd*(input.value/100)*100)/100:input.value;
@@ -276,6 +281,9 @@
     const at=now(),operationId=identity('planning_operation');
     let account=accountById(next,accountId),changedMonth=null,requiresConfiguration=false;
     try{
+      if(['recordResult','recordContribution','recordWithdrawal','confirmNoMovement','finalizeMonth','reopenMonth'].includes(type)){
+        const blocked=planning.annualReview.guard(account.plan,clean.month);requireThat(!blocked,blocked?.message);
+      }
       if(type==='createAccount'){
         const c=configuration(clean),plan=engine.createPlan(c,{id:identity('planning_plan'),now:at});
         applyConfigStop(plan,c,at,true);
@@ -296,13 +304,26 @@
         changedMonth=applyFlow(account.plan,'result',clean,at);
       }else if(type==='recordContribution'||type==='recordWithdrawal'){
         changedMonth=applyFlow(account.plan,type==='recordContribution'?'contribution':'withdrawal',clean,at);
+      }else if(type==='confirmNoMovement'){
+        const p=account.plan,month=monthInPlan(p,clean.month);
+        requireThat(clean.confirmation===true,'Confirme explicitamente a ausência de movimento.');
+        const previous=planning.monthlyInputs.confirm(p,month,clean.kind,at);
+        history(p,'no-movement-confirmed',at,{month,kind:clean.kind,value:previous},{month,kind:clean.kind,value:p.monthlyInputs.noMovement[month][clean.kind]});changedMonth=month;
       }else if(type==='finalizeMonth'){
         const p=account.plan,month=monthInPlan(p,clean.month),previous=applyClosure(p,month,clean.confirmFlows,at,operationId);
         history(p,'month-finalized',at,{month,value:previous},{month,value:p.closures[month]});
       }else if(type==='reopenMonth'){
         const p=account.plan,month=monthInPlan(p,clean.month);requireThat(text(clean.reason),'Informe o motivo da reabertura.');
         requireThat(p.closures[month]?.confirmed===true,'O mês não tem fechamento confirmado.');
-        reopenDependents(p,month,at,text(clean.reason));
+        reopenMonthRecords(p,month,at,text(clean.reason));
+      }else if(type==='finalizeYear'){
+        const previous=planning.annualReview.seal(account,clean,currentMonth(),at);
+        history(account.plan,'year-finalized',at,{year:clean.year,value:previous},{year:clean.year,value:account.plan.annualClosures.years[clean.year]});
+      }else if(type==='reopenYear'){
+        requireThat(typeof clean.year==='string'&&account.plan.annualClosures?.years?.[clean.year]?.confirmed===true,'O ano não tem encerramento confirmado.');
+        requireThat(text(clean.reason),'Informe o motivo da reabertura anual.');
+        const previous=clone(account.plan.annualClosures),years=planning.annualReview.invalidateFrom(account.plan,clean.year,at,text(clean.reason));
+        history(account.plan,'year-reopened',at,previous,{years},text(clean.reason));
       }else if(type==='restartPlan'){
         requireThat(clean.confirmation===true,'Confirme o arquivamento e reinício do plano.');
         requireThat(!hasRecordedFacts(account.plan),'Esta conta já tem lançamentos ou meses confirmados. Use Reiniciar → Somente uma conta antes de começar outro plano.');
@@ -339,14 +360,15 @@
         requireThat(clean.stopAfter===null||engine.monthKey(clean.stopAfter)===clean.stopAfter&&clean.stopAfter>=bounds.min&&clean.stopAfter<=bounds.max,'Mês de parada inválido: respeite o período atual e o horizonte do plano.');
         if(clean.stopAfter!==null){
           requireThat(Number.isFinite(clean.impactLimit)&&clean.impactLimit>=0&&clean.impactLimit<=1,'Informe o limite de impacto entre 0% e 100%.');
-          const simulation=engine.simulate(p,{month,stopAfter:clean.stopAfter,impactLimit:clean.impactLimit});
+          const simulation=engine.simulate(p,{month,stopAfter:clean.stopAfter,impactLimit:clean.impactLimit,balancePolicy:'confirmed-projection'});
           requireThat(simulation.viable&&simulation.withinImpactLimit===true,'A parada ultrapassa o impacto permitido ou não tem projeção viável.');
         }
         const before={stopAfter:p.stopAfter??null,future:clone(p.future)},candidatePlan=engine.withContributionStop(p,{month,stopAfter:clean.stopAfter});
         p.stopAfter=candidatePlan.stopAfter;p.future=candidatePlan.future;
         history(p,'contribution-stop-updated',at,before,{stopAfter:p.stopAfter,future:clone(p.future),impactLimit:clean.impactLimit??null});
       }else throw new Error('Comando de planejamento desconhecido.');
-      if(changedMonth)reopenDependents(account.plan,changedMonth,at,'Correção factual exige reconferência dos meses dependentes.');
+      if(changedMonth)reopenMonthRecords(account.plan,changedMonth,at,'Alteração dos registros exige reconferência deste mês.');
+      if(changedMonth||type==='reopenMonth')planning.annualReview.invalidateFrom(account.plan,(changedMonth||clean.month).slice(0,4),at,'Correção mensal exige nova revisão anual.');
       recalculate(account.plan);
       account.plan.revision++;next.revision++;
       next.audit.push({id:identity('planning_audit'),at,type,accountId:account.id,planId:account.plan.id,revision:next.revision,operationId});
@@ -368,23 +390,26 @@
         return confirmed;
       }
       generation++;
-      if(written?.status==='REFUSED')return result(written.reason==='CONFLICT'?'CONFLICT':'REFUSED',['Gravação recusada; nenhum registro foi confirmado. Preserve e revise o rascunho.']);
+      if(written?.status==='REFUSED')return result(written.reason==='CONFLICT'?'CONFLICT':'REFUSED',[written.message||'Gravação recusada; nenhum registro foi confirmado. Preserve e revise o rascunho.'],{storageReason:written.reason});
       unknown=true;if(typeof markJPWealthPersistenceOutcomeUnknown==='function'&&!(typeof jpWealthPersistenceOutcomeIsUnknown==='function'&&jpWealthPersistenceOutcomeIsUnknown()))markJPWealthPersistenceOutcomeUnknown('Planejamento: confirmação indisponível.');
       return result('UNKNOWN',['Gravação indeterminada; preserve o rascunho e confira a recuperação.']);
     }catch(error){return result('INVALID',[error.message||'Entrada de planejamento inválida.']);}
   }
   function applyClosure(p,month,confirmFlows,at,operationId){
+    const annualBlock=planning.annualReview.guard(p,month);requireThat(!annualBlock,annualBlock?.message);
     requireThat(confirmFlows===true,'Confira e confirme os aportes e saques efetivos.');
     requireThat(own(p.results,month),'Registre o resultado total do mês, inclusive zero, antes de finalizar.');
-    const prior=month===p.startMonth?null:p.closures[engine.addMonths(month,-1)];
-    requireThat(month===p.startMonth||prior?.confirmed===true,'Reconferir e finalizar os meses anteriores antes deste fechamento.');
+    const filled=planning.monthlyInputs.status(p,month);
+    requireThat(filled.contribution,'Preencha o aporte ou confirme sem aporte neste mês.');
+    requireThat(filled.withdrawal,'Preencha o saque ou confirme sem saque neste mês.');
     requireThat(p.closures[month]?.confirmed!==true,'Este mês já está finalizado.');
     const previous=p.closures[month]||null,q=closureQuote(month);
-    p.closures[month]={confirmed:true,confirmFlows:true,revision:(previous?.revision||0)+1,confirmedAt:at,operationId,
+    p.closures[month]={confirmed:true,confirmFlows:true,recordsReview:planning.monthlyInputs.review(p,month),revision:(previous?.revision||0)+1,confirmedAt:at,operationId,
       ...(q?{fxQuote:q}:{}),...(previous?{previous:clone(previous)}:{})};
     const row=recalculate(p).find(item=>item.month===month);
-    requireThat(row&&row.finalized&&finite(row.resultUsd)&&finite(row.openUsd)&&finite(row.closeUsd)&&row.closeUsd>=0,'Mês não calculável para fechamento.');
-    p.closures[month].snapshot=clone(row);
+    requireThat(row&&row.finalized&&finite(row.resultUsd),'Registros do mês inválidos para fechamento.');
+    const {projectionStatus,blockingMonth,balanceStatus,...snapshot}=row;
+    p.closures[month].snapshot=clone(snapshot);
     return previous;
   }
   function previewFinalizeMonth({accountId,month}={}){
@@ -395,17 +420,18 @@
       const p=account.plan;
       validContext=engine.monthKey(month)===month&&month>=p.startMonth&&month<=engine.addMonths(p.startMonth,119);
       if(validContext){
+        const annualBlock=planning.annualReview.guard(p,month);if(annualBlock)blockers.push(annualBlock);
         if(!own(p.results,month))blockers.push({code:'MISSING_RESULT',month});
-        for(let prior=p.startMonth;prior<month;prior=engine.addMonths(prior,1)){
-          if(p.closures[prior]?.confirmed!==true){blockers.push({code:'PREVIOUS_UNCONFIRMED',month:prior});break;}
-        }
+        const filled=planning.monthlyInputs.status(p,month);
+        if(!filled.contribution)blockers.push({code:'MISSING_CONTRIBUTION',month});
+        if(!filled.withdrawal)blockers.push({code:'MISSING_WITHDRAWAL',month});
         if(p.closures[month]?.confirmed===true)blockers.push({code:'ALREADY_FINALIZED',month});
         if(month>currentMonth())blockers.push({code:'FUTURE_MONTH',month});
       }
       // The existing command validation remains the source of legacy errors and
       // of the effective row. Diagnostics only inspect this detached candidate.
       month=monthInPlan(p,month);applyClosure(p,month,true,now(),'preview-only');
-      return {ok:true,status:'PREVIEW',errors:[],row:clone(p.closures[month].snapshot),blockers:[]};
+      return {ok:true,status:'PREVIEW',errors:[],row:clone(engine.timeline(p,{month:currentMonth(),quote:publicQuote(),balancePolicy:'confirmed-projection'}).find(r=>r.month===month)),blockers:[]};
     }catch(error){return {ok:false,status:'INVALID',errors:[error.message||'Prévia de fechamento indisponível.'],
       blockers:validContext?(blockers.length?blockers:[{code:'NOT_COMPUTABLE',month}]):[{code:'INVALID_CONTEXT',month:null}]};}
   }
@@ -427,7 +453,7 @@
     const month=currentMonth(),bounds=engine.stopBounds(p,{month,newPlan});
     requireThat(engine.monthKey(c.stopAfter)===c.stopAfter&&c.stopAfter>=bounds.min&&c.stopAfter<=bounds.max,'A parada deve respeitar o mês atual, o histórico e o horizonte do plano.');
     requireThat(finite(c.stopImpactLimit)&&c.stopImpactLimit>=0&&c.stopImpactLimit<=1,'Escolha um limite de impacto entre 0% e 100%.');
-    const simulation=engine.simulate(p,{month,newPlan,stopAfter:c.stopAfter,impactLimit:c.stopImpactLimit});
+    const simulation=engine.simulate(p,{month,newPlan,stopAfter:c.stopAfter,impactLimit:c.stopImpactLimit,...(!newPlan?{balancePolicy:'confirmed-projection'}:{})});
     requireThat(simulation.viable&&simulation.withinImpactLimit===true,'A simulação mudou ou ultrapassa o limite escolhido. Reabra Planejar quando parar de aportar antes de salvar.');
     const next=engine.withContributionStop(p,{month,newPlan,stopAfter:c.stopAfter});p.stopAfter=next.stopAfter;p.future=next.future;
     history(p,'contribution-stop-updated',at,null,{stopAfter:p.stopAfter,impactLimit:c.stopImpactLimit});
@@ -437,14 +463,14 @@
       const value=envelope(),issues=errorsFor(value);requireThat(!issues.length,issues.join(' '));
       const account=clone(accountById(value,accountId));requireThat(account&&account.active===true,'Conta ativa de planejamento não encontrada.');
       assertSafeInput(config);reviseAccount(account,config,replaceFuture,now(),false);
-      return {ok:true,status:'PREVIEW',errors:[],model:engine.account(account,{month:currentMonth(),quote:publicQuote()})};
+      return {ok:true,status:'PREVIEW',errors:[],model:engine.account(account,{month:currentMonth(),quote:publicQuote(),balancePolicy:'confirmed-projection'})};
     }catch(error){return {ok:false,status:'INVALID',errors:[error.message||'Prévia indisponível.']};}
   }
   function view(options={}){
     const value=envelope(),issues=errorsFor(value),quote=own(options,'quote')?options.quote:publicQuote();
     if(issues.length)return {status:'INCOMPATIBLE',issues,accounts:[],rows:[],confirmedThrough:null,
       confirmed:{balanceUsd:null,contributionsUsd:null,resultUsd:null,withdrawalsUsd:null,initialUsd:null}};
-    const calculation={...options,month:options.month||currentMonth(),quote};
+    const calculation={...options,month:options.month||currentMonth(),quote,balancePolicy:'confirmed-projection'};
     if(options.accountId){const account=accountById(value,options.accountId);return account?engine.account(clone(account),calculation):{status:'NOT_FOUND',issues:['Conta de planejamento não encontrada.'],rows:[]};}
     return engine.portfolio(clone(value),calculation);
   }
@@ -502,7 +528,6 @@
       const last=Array.from(months).sort().at(-1);
       if(last)for(let key=plan.startMonth;key<=last;key=engine.addMonths(key,1)){
         if(plan.closures[key]?.confirmed!==true){if(firstOpen===null)firstOpen=key;}
-        else if(firstOpen!==null)return unavailable('A sequência dos fechamentos precisa de reconferência na origem.');
       }
       const pending=Array.from(months).sort().filter(key=>plan.closures[key]?.confirmed!==true).map(key=>({month:key,
         codes:['UNCONFIRMED_MONTH',...(!own(plan.results,key)?['MISSING_RESULT']:[]),...(invalidated.has(key)?['CLOSURE_INVALIDATED']:[])]}));
@@ -513,7 +538,13 @@
     }
     return {available:true,accounts,issues:[]};
   }
-  planning.queries={previewAccount,previewFlow,previewResultInput,previewReset,previewFinalizeMonth,pendingActions,snapshot:()=>clone(envelope()),view,sheetView:options=>engine.sheetView(clone(envelope()),{month:currentMonth(),quote:publicQuote(),...(options||{})}),account:id=>clone(accountById(envelope(),id)),token,
+  function annualOverview({accountId,year}={}){
+    const value=envelope(),issues=errorsFor(value);requireThat(!issues.length,issues.join(' '));
+    const account=accountById(value,accountId);requireThat(account&&account.active===true,'Conta ativa de planejamento não encontrada.');
+    return planning.annualReview.overview(clone(account),String(year),currentMonth());
+  }
+  function previewFinalizeYear(input={}){try{const overview=annualOverview(input);return {...overview,status:'PREVIEW',errors:overview.blockers.map(b=>b.message)};}catch(error){return {ok:false,status:'INVALID',errors:[error.message],blockers:[]};}}
+  planning.queries={annualOverview,previewFinalizeYear,previewAccount,previewFlow,previewResultInput,previewReset,previewFinalizeMonth,pendingActions,snapshot:()=>clone(envelope()),view,sheetView:options=>engine.sheetView(clone(envelope()),{month:currentMonth(),quote:publicQuote(),...(options||{}),balancePolicy:'confirmed-projection'}),account:id=>clone(accountById(envelope(),id)),token,
     history:id=>{const value=envelope(),account=accountById(value,id);return {planId:account?.plan?.id||null,history:clone(account?.plan?.history||[]),archive:clone(Array.isArray(value?.archive)?value.archive.filter(item=>item.accountId===id):[])};},
     legacy:()=>({schemaVersion:1,source:'S.fxPlanning',exportOnly:true,value:sanitizeLegacy(state()?.fxPlanning??null)})};
   planning.commands={execute,resetContext};

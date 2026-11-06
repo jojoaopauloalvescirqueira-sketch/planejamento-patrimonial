@@ -185,7 +185,10 @@
 #planning .pl-native-monthly-grid input{max-width:125px;width:105px;min-height:34px;color:var(--violet);background:var(--accent-tint);border:1px solid transparent;font-size:12px;text-align:right}
 #planning .pl-native-monthly-grid select{font-size:12px;min-width:75px;min-height:34px;padding:5px}
 #planning .pl-native-monthly-grid .pl-month-finalized{background:var(--panel-2)}
-#planning .pl-native-monthly-grid .pl-month-current>th{background:var(--f1-bg);color:var(--success)}
+/* Past months still open need attention; a confirmed past closure keeps its own state. */
+#planning .pl-native-monthly-grid .pl-month-past.pl-month-pending.pl-highlight-past:not(.pl-month-finalized)>:is(th,td){background:#fdebed}
+html[data-theme=dark] #planning .pl-native-monthly-grid .pl-month-past.pl-month-pending.pl-highlight-past:not(.pl-month-finalized)>:is(th,td){background:#442028}
+#planning .pl-native-monthly-grid .pl-month-current>th{background:var(--f1-bg);color:var(--accent)}
 #planning .pl-native-monthly-grid .pl-row-selected{box-shadow:inset 3px 0 var(--violet)}
 #planning .pl-native{font-size:13px;line-height:1.55;color:var(--ink)}
 #planning .pl-native .section-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin:25px 0 14px}
@@ -377,17 +380,18 @@ html[data-theme="dark"] #planning [data-pl-current-year=true]{background:#173529
 #planning .pl-native-monthly-grid{table-layout:fixed;width:100%;white-space:normal}
 #planning .pl-native-monthly-grid :is(th,td){min-width:0;padding:10px 7px;vertical-align:top;font-size:12px;line-height:1.5;overflow-wrap:anywhere;white-space:normal;text-align:right}
 #planning .pl-native-monthly-grid thead th{min-width:0;font-size:12px;vertical-align:middle}
-#planning .pl-native-monthly-grid thead th:nth-child(1){width:16%;text-align:left}
-#planning .pl-native-monthly-grid thead th:nth-child(2){width:13%}
-#planning .pl-native-monthly-grid thead th:nth-child(3){width:19%}
-#planning .pl-native-monthly-grid thead th:nth-child(4){width:12%}
-#planning .pl-native-monthly-grid thead th:nth-child(5){width:14%}
-#planning .pl-native-monthly-grid thead th:nth-child(6){width:17%}
-#planning .pl-native-monthly-grid thead th:nth-child(7){width:9%}
+#planning .pl-native-monthly-grid thead th:nth-child(1){width:15%;text-align:left}
+#planning .pl-native-monthly-grid thead th:nth-child(2){width:12%}
+#planning .pl-native-monthly-grid thead th:nth-child(3){width:8%}
+#planning .pl-native-monthly-grid thead th:nth-child(4){width:16%}
+#planning .pl-native-monthly-grid thead th:nth-child(5){width:11%}
+#planning .pl-native-monthly-grid thead th:nth-child(6){width:12%}
+#planning .pl-native-monthly-grid thead th:nth-child(7){width:17%}
+#planning .pl-native-monthly-grid thead th:nth-child(8){width:9%}
 #planning .pl-native-monthly-grid tbody th{text-align:left}
 #planning .pl-native-monthly-grid [data-pl-select-month]{display:block;width:100%;min-height:44px;padding:3px 0;text-align:left;font-size:12px;line-height:1.5;overflow-wrap:anywhere;white-space:normal}
 #planning .pl-month-state{display:block;color:var(--ink-dim);font-size:12px;margin-top:4px}
-#planning .pl-month-current .pl-month-state{color:var(--success)}
+#planning .pl-month-current .pl-month-state{color:var(--accent)}
 #planning .pl-native-monthly-grid .pl-money-primary{display:block;font-size:12px;font-weight:550}
 #planning .pl-native-monthly-grid .pl-money-secondary{display:block;font-size:12px;color:var(--ink-dim);margin-top:4px}
 #planning .pl-native-monthly-grid [data-pl-month-value]{display:block;min-width:0}
@@ -407,8 +411,9 @@ html[data-theme="dark"] #planning [data-pl-current-year=true]{background:#173529
 #planning [data-pl-month-details] .pl-rate-label{display:none}
 #planning [data-pl-monthly-layout=wide] .pl-month-primary-details{display:none}
 #planning [data-pl-monthly-layout=compact] .pl-month-primary-details{padding-bottom:20px;margin-bottom:20px;border-bottom:1px solid var(--line)}
-#planning [data-pl-monthly-layout=compact] .pl-native-monthly-grid thead th:nth-child(1){width:30%}
-#planning [data-pl-monthly-layout=compact] .pl-native-monthly-grid thead th:nth-child(2),#planning [data-pl-monthly-layout=compact] .pl-native-monthly-grid thead th:nth-child(3){width:35%}
+#planning [data-pl-monthly-layout=compact] .pl-native-monthly-grid thead th:nth-child(1){width:26%}
+#planning [data-pl-monthly-layout=compact] .pl-native-monthly-grid thead th:nth-child(2){width:16%}
+#planning [data-pl-monthly-layout=compact] .pl-native-monthly-grid thead th:nth-child(3),#planning [data-pl-monthly-layout=compact] .pl-native-monthly-grid thead th:nth-child(4){width:29%}
 #planning [data-pl-monthly-layout=compact] .pl-native-monthly-grid :is(td,th){padding-left:5px;padding-right:5px}
 #planning [data-pl-monthly-layout=compact] .pl-native-monthly-grid .pl-month-detail-row>td{padding:0}
 #planning [data-pl-monthly-layout=wide] .pl-phase-compact-values{display:none}
@@ -430,8 +435,8 @@ html[data-theme="dark"] #planning [data-pl-current-year=true]{background:#173529
 #planning .pl-native-monthly-grid [data-pl-grid-month] .pl-money-primary{line-height:1.35}
 #planning .pl-native-monthly-grid .pl-month-past.pl-highlight-past>:is(th,td){background:#edf7f0}
 html[data-theme=dark] #planning .pl-native-monthly-grid .pl-month-past.pl-highlight-past>:is(th,td){background:#183326}
-#planning .pl-native-monthly-grid .pl-month-current>:is(th,td){background:#e1f3e8}
-html[data-theme=dark] #planning .pl-native-monthly-grid .pl-month-current>:is(th,td){background:#173d2c}
+#planning .pl-native-monthly-grid .pl-month-current>:is(th,td){background:#e8f1ff}
+html[data-theme=dark] #planning .pl-native-monthly-grid .pl-month-current>:is(th,td){background:#17324f}
 #planning .pl-native-monthly-grid .pl-row-selected>th{box-shadow:inset 3px 0 var(--accent)}
 #planning .pl-native-monthly-grid [data-pl-inline-editor] :is(input,select){min-height:44px;font-size:16px;max-width:100%;width:100%}
 #planning .pl-inline-editor{border:1px solid var(--line);border-radius:8px;padding:16px;margin-bottom:20px;text-align:left;min-width:0}
@@ -463,3 +468,5 @@ html[data-theme=dark] #planning .pl-native-monthly-grid .pl-month-current>:is(th
 
 #planning .pl-dialog[data-pl-submit="finalize"]{left:50%;max-width:calc(100% - 2 * var(--pl-dialog-gutter))}
 
+
+#planning .pl-native-monthly-grid .pl-result-rate-cell [data-pl-month-value=rate]{margin:0}

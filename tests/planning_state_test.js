@@ -38,6 +38,8 @@ function harness(initial={}){
   const engineSource=fs.readFileSync(engineFile,'utf8');
   assert.equal(engineSource.split('function timeline(plan, options) {').length,2,'timeline probe has one exact entry point');
   vm.runInContext(engineSource.replace('function timeline(plan, options) {','function timeline(plan, options) { control.timelineCalls++;'),context,{filename:engineFile});
+  vm.runInContext(fs.readFileSync(path.join(root,'dist/assets/monthly-inputs.js'),'utf8'),context);
+  vm.runInContext(fs.readFileSync(path.join(root,'dist/assets/annual-review.js'),'utf8'),context);
   vm.runInContext(fs.readFileSync(moduleFile,'utf8'),context,{filename:moduleFile});
   const api=context.JPWPlanning;
   assert.equal(typeof api?.commands?.execute,'function','commands.execute is available');
@@ -63,7 +65,10 @@ function realWriterHarness(initial={}){
 }
 function execute(h,type,payload,token){return h.api.commands.execute(type,payload,token||h.api.queries.token(payload?.accountId));}
 function create(h,changes={}){const r=execute(h,'createAccount',config(changes));assert.equal(r.status,'CONFIRMED',JSON.stringify(r));return r.accountId;}
-function ok(h,type,payload){const r=execute(h,type,payload);assert.equal(r.status,'CONFIRMED',JSON.stringify(r));return r;}
+function closeThroughCurrent(h,id){const p=h.api.queries.account(id).plan;for(let m=p.startMonth;m<='2026-10';m=h.api.engine.addMonths(m,1)){if(!h.api.queries.account(id).plan.results[m])ok(h,'recordResult',{accountId:id,month:m,usd:0});if(!h.api.queries.account(id).plan.closures[m]?.confirmed)ok(h,'finalizeMonth',{accountId:id,month:m,confirmFlows:true});}}
+function completeEmptyFlows(h,payload){const p=h.api.queries.account(payload.accountId).plan,filled=h.api.monthlyInputs.status(p,payload.month);for(const kind of ['contribution','withdrawal'])if(!filled[kind]){const r=execute(h,'confirmNoMovement',{accountId:payload.accountId,month:payload.month,kind,confirmation:true});assert.equal(r.status,'CONFIRMED',JSON.stringify(r));}}
+// Closure fixtures explicitly complete empty flows under the new contract; direct execute assertions remain ungated.
+function ok(h,type,payload){if(type==='finalizeMonth')completeEmptyFlows(h,payload);const r=execute(h,type,payload);assert.equal(r.status,'CONFIRMED',JSON.stringify(r));return r;}
 const tests=[];const test=(name,run)=>tests.push({name,run});
 test('PLSTATE-01 absent aggregate reads empty without writing or creating it',()=>{
   const h=harness({forex:{untouched:true},fxPlanning:{opaque:['legacy']}});
@@ -134,16 +139,16 @@ test('PLSTATE-09 finalize requires explicit facts and confirmed flows; USD works
   const a=h.api.queries.account(id);assert.equal(a.plan.closures['2026-01'].confirmed,true);
   assert.equal(h.api.queries.view({accountId:id}).confirmed.balanceUsd,1000);assert.equal(a.plan.contributions.length,0);
 });
-test('PLSTATE-10 historical correction reopens dependent closures preserves absolute facts and reference',()=>{
+test('PLSTATE-10 correction reopens only its own records; dependent checks and reference survive',()=>{
   const h=harness(),id=create(h),ref=plain(h.api.queries.account(id).plan.reference);
   ok(h,'recordResult',{accountId:id,month:'2026-01',usd:100});ok(h,'recordContribution',{accountId:id,month:'2026-01',usd:200,brl:1000});
   ok(h,'recordWithdrawal',{accountId:id,month:'2026-01',usd:50});ok(h,'finalizeMonth',{accountId:id,month:'2026-01',confirmFlows:true});
   ok(h,'recordResult',{accountId:id,month:'2026-02',usd:25});ok(h,'finalizeMonth',{accountId:id,month:'2026-02',confirmFlows:true});
   ok(h,'recordResult',{accountId:id,month:'2026-01',usd:150});const p=h.api.queries.account(id).plan;
-  assert.equal(p.results['2026-02'].usd,25);assert.equal(p.closures['2026-01'].confirmed,false);assert.equal(p.closures['2026-02'].confirmed,false);
-  assert.equal(p.closures['2026-02'].previous.confirmed,true);assert.deepEqual(plain(p.reference),ref);
-  const rows=h.api.queries.view({accountId:id}).rows;assert.equal(rows[0].closeUsd,1300);assert.equal(rows[1].closeUsd,1325);
-  assert.equal(h.api.queries.view({accountId:id}).confirmed.balanceUsd,null);
+  assert.equal(p.results['2026-02'].usd,25);assert.equal(p.closures['2026-01'].confirmed,false);assert.equal(p.closures['2026-02'].confirmed,true);
+  assert.equal(p.closures['2026-02'].recordsReview.version,1);assert.deepEqual(plain(p.reference),ref);
+  const rows=h.api.queries.view({accountId:id}).rows;assert.equal(rows[0].closeUsd,1300);assert.equal(rows[1].closeUsd,null);assert.equal(rows[1].blockingMonth,'2026-01');
+  assert.equal(h.api.queries.view({accountId:id}).confirmed.balanceUsd,1000);assert.equal(h.api.queries.view({accountId:id}).confirmed.basis,'INITIAL_CAPITAL');assert.equal(h.api.queries.view({accountId:id}).confirmedThrough,null);
 });
 test('PLSTATE-11 known operation replay returns confirmed once while arbitrary IDs cannot replay',()=>{
   const h=harness(),id=create(h),token=h.api.queries.token(id),payload={accountId:id,month:'2026-01',usd:10};
@@ -166,7 +171,7 @@ test('PLSTATE-12 dedicated reset archives complete prior plan before atomic repl
   assert.equal(e.accounts[0].plan.initialUsd,2000);assert.equal(h.control.calls.at(-1).candidate.patrimonialPlanning.archive.length,1);
 });
 test('PLSTATE-13 projection stop and metadata update preserve original reference and confirmed facts',()=>{
-  const h=harness(),id=create(h),ref=plain(h.api.queries.account(id).plan.reference);
+  const h=harness(),id=create(h),ref=plain(h.api.queries.account(id).plan.reference);closeThroughCurrent(h,id);
   ok(h,'setProjection',{accountId:id,month:'2026-11',rate:0.04,contributionUsd:250});
   assert.equal(execute(h,'setProjection',{accountId:id,month:'2026-01',rate:0.04,contributionUsd:250}).status,'INVALID');
   ok(h,'applyStop',{accountId:id,stopAfter:'2026-12',impactLimit:1});
@@ -266,15 +271,15 @@ test('PLSTATE-25 nonserializable malformed input returns INVALID without throwin
   assert.doesNotThrow(()=>{result=execute(h,'createAccount',{...config(),name:()=>{}});});
   assert.equal(result.status,'INVALID');assert.deepEqual(h.state(),before);assert.equal(h.control.calls.length,0);
 });
-test('PLSTATE-26 explicit reopen keeps USD facts and reopens dependent months with reason',()=>{
+test('PLSTATE-26 explicit reopen keeps USD facts and other checks with its own reason',()=>{
   const h=harness(),id=create(h);for(const month of ['2026-01','2026-02']){
     ok(h,'recordResult',{accountId:id,month,usd:10});ok(h,'finalizeMonth',{accountId:id,month,confirmFlows:true});
   }
   const facts=plain(h.api.queries.account(id).plan.results),before=h.state();
   assert.equal(execute(h,'reopenMonth',{accountId:id,month:'2026-01',reason:' '}).status,'INVALID');assert.deepEqual(h.state(),before);
   ok(h,'reopenMonth',{accountId:id,month:'2026-01',reason:'Conferência sintética'});const p=h.api.queries.account(id).plan;
-  assert.deepEqual(plain(p.results),facts);assert.equal(p.closures['2026-01'].confirmed,false);assert.equal(p.closures['2026-02'].confirmed,false);
-  assert.equal(p.closures['2026-02'].reason,'Conferência sintética');
+  assert.deepEqual(plain(p.results),facts);assert.equal(p.closures['2026-01'].confirmed,false);assert.equal(p.closures['2026-02'].confirmed,true);
+  assert.equal(p.closures['2026-01'].reason,'Conferência sintética');
   ok(h,'finalizeMonth',{accountId:id,month:'2026-01',confirmFlows:true});assert.equal(h.api.queries.account(id).plan.closures['2026-01'].previous.previous.confirmed,true);
 });
 test('PLSTATE-27 real writer load workspace and session gates refuse before physical write',()=>{
@@ -297,8 +302,8 @@ test('PLSTATE-28 cannot adopt adjacent unconfirmed RAM through a planning comman
 test('PLSTATE-29 current closure snapshot contains effective flows, never forecast contribution',()=>{
  const h=harness();const id=create(h,{startMonth:'2026-10',monthlyContributionUsd:100});
  assert.equal(execute(h,'recordResult',{accountId:id,month:'2026-10',usd:30}).ok,true);
- assert.equal(h.api.queries.view({accountId:id}).rows[0].contributionUsd,100);
- assert.equal(execute(h,'finalizeMonth',{accountId:id,month:'2026-10',confirmFlows:true}).ok,true);
+ assert.equal(h.api.queries.view({accountId:id}).rows[0].contributionUsd,0);assert.equal(h.api.queries.view({accountId:id}).rows[0].plannedContributionUsd,100);
+ completeEmptyFlows(h,{accountId:id,month:'2026-10'});assert.equal(execute(h,'finalizeMonth',{accountId:id,month:'2026-10',confirmFlows:true}).ok,true);
  const closure=h.api.queries.account(id).plan.closures['2026-10'];
  assert.equal(closure.snapshot.contributionUsd,0);assert.equal(closure.snapshot.closeUsd,1030);assert.equal(h.api.queries.view({accountId:id}).confirmed.balanceUsd,1030);
 });
@@ -358,14 +363,14 @@ test('PLSTATE-37 contribution stop refuses retroactive dates and impact over the
 test('PLSTATE-38 first permitted stop applies exactly the simulated cashflows and keeps factual records and reference',()=>{
  const h=harness(),id=create(h);ok(h,'recordContribution',{accountId:id,month:'2026-01',usd:75,brl:375});
  ok(h,'recordResult',{accountId:id,month:'2026-01',usd:25});ok(h,'setProjection',{accountId:id,month:'2026-12',rate:.04,contributionUsd:350});
- const before=h.api.queries.account(id).plan,found=h.api.engine.findContributionStop(before,{month:'2026-10',quote,impactLimit:.05});assert.ok(found);
+ closeThroughCurrent(h,id);const before=h.api.queries.account(id).plan,found=h.api.engine.findContributionStop(before,{month:'2026-10',quote,impactLimit:.05,balancePolicy:'confirmed-projection'});assert.ok(found);
  assert.equal(found.result.withinImpactLimit,true);ok(h,'applyStop',{accountId:id,stopAfter:found.stopAfter,impactLimit:.05});
  const after=h.api.queries.account(id).plan,rows=h.api.queries.view({accountId:id}).rows;
  assert.deepEqual(plain(rows),plain(found.result.rows));
  for(const key of ['reference','results','contributions','withdrawals','closures'])assert.deepEqual(plain(after[key]),plain(before[key]));
 });
 test('PLSTATE-39 stop materializes future zeroes and allows later deliberate projection edits',()=>{
- const h=harness(),id=create(h);ok(h,'setProjection',{accountId:id,month:'2026-12',rate:.04,contributionUsd:350});
+ const h=harness(),id=create(h);closeThroughCurrent(h,id);ok(h,'setProjection',{accountId:id,month:'2026-12',rate:.04,contributionUsd:350});
  ok(h,'applyStop',{accountId:id,stopAfter:'2026-10',impactLimit:1});
  assert.equal(h.api.queries.account(id).plan.future['2026-12'].contributionUsd,0);
  assert.equal(h.api.queries.account(id).plan.future['2026-12'].rate,.04);
@@ -516,14 +521,14 @@ test('PLCLOSE-Q01 missing fact reports structured month without financial writes
  assert.match(r.errors.join(' '),/resultado total/);assert.deepEqual(h.state(),before);assert.equal(h.control.calls.length,calls);
  r.blockers[0].month='2099-01';assert.equal(h.api.queries.previewFinalizeMonth({accountId:id,month:'2026-01'}).blockers[0].month,'2026-01');
 });
-test('PLCLOSE-Q02 earliest previous unconfirmed month is explicit even with missing current result',()=>{
+test('PLCLOSE-Q02 missing own result blocks but previous months do not',()=>{
  const h=harness(),id=create(h);ok(h,'recordResult',{accountId:id,month:'2026-01',usd:0});ok(h,'finalizeMonth',{accountId:id,month:'2026-01',confirmFlows:true});
  const before=h.state(),r=h.api.queries.previewFinalizeMonth({accountId:id,month:'2026-04'});
- assert.ok(r.blockers.some(x=>x.code==='PREVIOUS_UNCONFIRMED'&&x.month==='2026-02'));
+ assert.ok(!r.blockers.some(x=>x.code==='PREVIOUS_UNCONFIRMED'));
  assert.ok(r.blockers.some(x=>x.code==='MISSING_RESULT'&&x.month==='2026-04'));assert.deepEqual(h.state(),before);
 });
-test('PLCLOSE-Q03 explicit zero produces unchanged legacy preview fields and empty blockers',()=>{
- const h=harness(),id=create(h);ok(h,'recordResult',{accountId:id,month:'2026-01',usd:0});
+test('PLCLOSE-Q03 explicit zeros produce unchanged preview fields and empty blockers',()=>{
+ const h=harness(),id=create(h);ok(h,'recordResult',{accountId:id,month:'2026-01',usd:0});completeEmptyFlows(h,{accountId:id,month:'2026-01'});
  const before=h.state(),calls=h.control.calls.length,r=h.api.queries.previewFinalizeMonth({accountId:id,month:'2026-01'});
  assert.equal(r.ok,true);assert.equal(r.status,'PREVIEW');assert.deepEqual(plain(r.errors),[]);assert.deepEqual(plain(r.blockers),[]);assert.equal(r.row.closeUsd,1000);
  assert.equal(r.row.contributionUsd,0);assert.deepEqual(h.state(),before);assert.equal(h.control.calls.length,calls);
@@ -580,9 +585,9 @@ test('PLNOTICE-Q04 confirmed months disappear and invalidated closures remain fa
  assert.equal(pending(h).accounts.length,0);
  ok(h,'recordResult',{accountId:id,month:'2026-02',usd:0});ok(h,'finalizeMonth',{accountId:id,month:'2026-02',confirmFlows:true});
  ok(h,'recordResult',{accountId:id,month:'2026-01',usd:1});
- const a=pending(h).accounts[0];assert.equal(a.count,2);assert.equal(a.firstMonth,'2026-01');assert.equal(a.dependencyMonth,null);
+ const a=pending(h).accounts[0];assert.equal(a.count,1);assert.equal(a.firstMonth,'2026-01');assert.equal(a.dependencyMonth,null);
  assert.ok(a.months.every(m=>m.codes.includes('CLOSURE_INVALIDATED')));
- const document=h.state();delete document.patrimonialPlanning.accounts[0].plan.results['2026-02'];h.setState(document);
+ ok(h,'reopenMonth',{accountId:id,month:'2026-02',reason:'Rever próprio resultado'});const document=h.state();delete document.patrimonialPlanning.accounts[0].plan.results['2026-02'];h.setState(document);
  assert.deepEqual(pending(h).accounts[0].months[1],{month:'2026-02',codes:['UNCONFIRMED_MONTH','MISSING_RESULT','CLOSURE_INVALIDATED']});
 });
 test('PLNOTICE-Q05 inactive accounts and false closures without a confirmed predecessor are excluded',()=>{
@@ -600,7 +605,7 @@ test('PLNOTICE-Q06 incompatible shape malformed identity and duplicate flows are
    d=>d.patrimonialPlanning.accounts[0].plan.results['2026-02']={usd:'0',revision:1},
    d=>d.patrimonialPlanning.accounts[0].plan.closures['2026-01']={confirmed:true,confirmFlows:false,revision:1},
    d=>d.patrimonialPlanning.accounts[0].plan.closures['2026-01']={confirmed:true,confirmFlows:true,revision:1},
-   d=>{const p=d.patrimonialPlanning.accounts[0].plan;p.results['2026-02']={usd:0,revision:1};p.closures['2026-02']={confirmed:true,confirmFlows:true,revision:1};}]){
+   d=>{const p=d.patrimonialPlanning.accounts[0].plan;p.results['2026-02']={usd:0,revision:1};p.closures['2026-02']={confirmed:true,confirmFlows:true,revision:'invalid'};}]){
   const d=plain(valid);corrupt(d);h.setState(d);const r=pending(h);assert.equal(r.available,false);assert.ok(r.issues.length);assert.deepEqual(h.state(),d);
  }
  assert.equal(pending(h,{month:'not-a-month'}).available,false);

@@ -22,6 +22,8 @@ function harness(initial={}){
       return control.mode==='REFUSED'?{status:'REFUSED',reason:'SYNTHETIC_REFUSAL'}:{status:'CONFIRMED',payload:JSON.stringify(candidate)};}});
   vm.runInContext('let S=initial; window=globalThis;',context);
   vm.runInContext(fs.readFileSync(engineFile,'utf8'),context,{filename:engineFile});
+  vm.runInContext(fs.readFileSync(path.join(root,'dist/assets/monthly-inputs.js'),'utf8'),context);
+  vm.runInContext(fs.readFileSync(path.join(root,'dist/assets/annual-review.js'),'utf8'),context);
   vm.runInContext(fs.readFileSync(moduleFile,'utf8'),context,{filename:moduleFile});
   return {api:context.JPWPlanning,control,state:()=>plain(vm.runInContext('S',context)),
     setState:value=>{context.next=plain(value);vm.runInContext('S=next',context);}};
@@ -107,11 +109,13 @@ test('PLRESULT-11 percent reads fresh opening capital after configuration change
   confirmed(h,'updateAccount',{accountId:id,config:{initialUsd:2000}});
   const r=valid(preview(h,input));assert.equal(r.openUsd,2000);assert.equal(r.monthTotalUsd,60);
 });
-test('PLRESULT-12 earlier confirmed result changes the next opening and percentage preview',()=>{
+test('PLRESULT-12 percentage waits for a confirmed preceding opening and follows corrections',()=>{
   const h=harness(),id=create(h),input={accountId:id,month:'2026-02',unit:'PERCENT',value:3};
-  const before=valid(preview(h,input));assert.equal(before.openUsd,1030);assert.equal(before.monthTotalUsd,30.9);
-  confirmed(h,'recordResult',{accountId:id,month:'2026-01',usd:100});
+  invalid(preview(h,input));confirmed(h,'recordResult',{accountId:id,month:'2026-01',usd:100});invalid(preview(h,input));
+  for(const kind of ['contribution','withdrawal'])confirmed(h,'confirmNoMovement',{accountId:id,month:'2026-01',kind,confirmation:true});
+  confirmed(h,'finalizeMonth',{accountId:id,month:'2026-01',confirmFlows:true});
   const after=valid(preview(h,input));assert.equal(after.openUsd,1100);assert.equal(after.monthTotalUsd,33);
+  confirmed(h,'recordResult',{accountId:id,month:'2026-01',usd:150});invalid(preview(h,input));
 });
 test('PLRESULT-13 preview succeeds without writer use and a later writer refusal preserves facts',()=>{
   const h=harness(),id=create(h),input={accountId:id,month:'2026-01',unit:'PERCENT',value:3},before=h.state(),calls=h.control.calls.length;

@@ -247,8 +247,8 @@ test('PLN-33 consolidation preserves historical FX absence and available matchin
   let rows = E.portfolio(v, { month: '2026-03', quote }).rows; assert.equal(rows[0].closeBrl, null);
   rows = E.portfolio(v, { month: '2026-03', quote, historicalQuotes: { '2026-01': quote } }).rows; near(rows[0].closeBrl, 5150); assert.equal(rows[1].closeBrl, null);
 });
-test('PLN-34 invalid confirmed gaps and corrupted immutable reference block envelope', () => {
-  const p = plan(), v = envelope([account(p)]); close(p, '2026-02', 30); assert.ok(E.validateEnvelope(v).length);
+test('PLN-34 independent confirmed gaps stay valid; malformed closure and immutable reference remain blocked', () => {
+  const p = plan(), v = envelope([account(p)]); close(p, '2026-02', 30); assert.equal(E.validateEnvelope(v).length,0); p.closures['2026-02'].confirmFlows=false; assert.ok(E.validateEnvelope(v).length);
   p.closures = {}; p.results = {}; p.reference.rows[1].closeUsd += 1; assert.ok(E.validateEnvelope(v).length);
 });
 test('PLN-35 final closure is retained but carrying known balances never manufactures new closures', () => {
