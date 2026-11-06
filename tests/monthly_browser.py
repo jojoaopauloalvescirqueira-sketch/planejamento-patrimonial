@@ -7,7 +7,8 @@ from playwright.sync_api import sync_playwright
 ROOT=Path(__file__).resolve().parents[1];OUT=ROOT/'outputs/monthly-browser';OUT.mkdir(parents=True,exist_ok=True)
 class Quiet(SimpleHTTPRequestHandler):
  def log_message(self,*_):pass
-server=ThreadingHTTPServer(('127.0.0.1',0),functools.partial(Quiet,directory=str(ROOT)));threading.Thread(target=server.serve_forever,daemon=True).start();BASE=f'http://127.0.0.1:{server.server_port}/';URL=BASE+'dist/'
+class Server(ThreadingHTTPServer):request_queue_size=128
+server=Server(('127.0.0.1',0),functools.partial(Quiet,directory=str(ROOT)));threading.Thread(target=server.serve_forever,daemon=True).start();BASE=f'http://127.0.0.1:{server.server_port}/';URL=BASE+'dist/'
 report={'checks':[],'failures':[],'limits':['Safari, physical touch and manual screen reader NOT_RUN.']}
 with sync_playwright() as pw:
  browser=pw.chromium.launch(headless=True,executable_path=os.environ.get('PP_CHROMIUM'))
@@ -56,6 +57,9 @@ with sync_playwright() as pw:
   if brl!='':p.locator('[name=brl]').fill(str(brl))
   review_confirm(page)
  def geometry(page):
+  # Viewport emulation returns before resize/ResizeObserver delivery. Measure
+  # the settled layout, retaining the same bounds and target-size assertions.
+  page.evaluate("()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))")
   g=page.evaluate("""()=>{const r=e=>{const x=e.getBoundingClientRect();return {x:x.x,y:x.y,w:x.width,h:x.height,right:x.right,bottom:x.bottom}},v=e=>!!e.getClientRects().length;return {width:innerWidth,height:innerHeight,overflow:document.documentElement.scrollWidth>innerWidth,dialogs:[...document.querySelectorAll('dialog[open]')].map(r),controls:[...document.querySelectorAll('dialog[open] button,dialog[open] select,dialog[open] input,.pl-inline-cell,.pl-month-check')].filter(v).map(e=>({...r(e),name:e.getAttribute('aria-label')||e.textContent}))}}""")
   assert not g['overflow'],g
   for d in g['dialogs']:assert d['x']>=-2 and d['y']>=-2 and d['right']<=g['width']+2 and d['bottom']<=g['height']+2,d
@@ -196,8 +200,8 @@ with sync_playwright() as pw:
   ctx,page,errors,id=boot()
   try:
    before=snapshot(page);dec=page.locator('[data-pl-grid-month="2026-12"]');assert dec.locator('[data-pl-month-value=open]').inner_text()=='—';assert dec.locator('.pl-month-balance .pl-money-primary').inner_text()=='—';assert dec.locator('[data-pl-month-value=rate]').inner_text()=='3%';assert dec.locator('[data-pl-inline-open=contributionUsd] .pl-cell-content').inner_text().endswith('200,00');assert 'Aguardando fechamento de' in page.locator('[data-pl-projection-wait]').inner_text();assert snapshot(page)==before
-   page.get_by_role('tab',name='Consolidado',exact=True).click();assert page.locator('[data-pl-summary-group=projection] .pl-metric strong').first.inner_text()=='—';assert 'Aguardando fechamento' in page.locator('[data-pl-summary-group=projection]').inner_text();assert page.locator('[data-pl-chart] .pl-line-projected').get_attribute('d')==''
-   page.evaluate('window.print=()=>{}');page.get_by_role('button',name='Gerar PDF',exact=True).click();report=page.locator('[data-pl-report]');assert 'Aguardando fechamento' in report.inner_text() and report.locator('.pl-report-projection strong').inner_text()=='—';assert report.locator('.pl-line-projected').get_attribute('d')=='';page.pdf(path=str(OUT/'sequencia-bloqueada.pdf'),format='A4',landscape=True);page.evaluate("dispatchEvent(new Event('afterprint'))")
+   page.get_by_role('tab',name='Consolidado',exact=True).click();assert page.locator('[data-pl-summary-group=projection] .pl-metric strong').first.inner_text()=='—';assert 'Aguardando fechamento' in page.locator('[data-pl-summary-group=projection]').inner_text();assert page.locator('[data-pl-chart] [data-pl-chart-series=planning]').get_attribute('d');assert page.locator('[data-pl-chart] [data-pl-chart-series=confirmed]').get_attribute('d')==''
+   page.evaluate('window.print=()=>{}');page.get_by_role('button',name='Gerar PDF',exact=True).click();report=page.locator('[data-pl-report]');assert 'Aguardando fechamento' in report.inner_text() and report.locator('.pl-report-projection strong').inner_text()=='—';assert report.locator('[data-pl-chart-series=planning]').get_attribute('d');assert report.locator('[data-pl-chart-series=confirmed]').get_attribute('d')=='';page.pdf(path=str(OUT/'sequencia-bloqueada.pdf'),format='A4',landscape=True);page.evaluate("dispatchEvent(new Event('afterprint'))")
    page.get_by_role('tab',name='Preenchimento mensal',exact=True).click();result(page,0);noflow(page,'contribution');noflow(page,'withdrawal');checkcontrol(page).click();page.locator('dialog[data-pl-submit=finalize] [data-pl-submit]').click();assert dec.locator('[data-pl-month-value=open]').inner_text().endswith('1.000,00');assert dec.locator('.pl-month-balance .pl-money-primary').inner_text().endswith('1.230,00');page.get_by_role('button',name='Próximo ano',exact=True).click();jan=page.locator('[data-pl-grid-month="2027-01"]');assert jan.locator('[data-pl-month-value=open]').inner_text().endswith('1.230,00') and jan.locator('.pl-month-balance .pl-money-primary').inner_text().endswith('1.466,90');page.screenshot(path=str(OUT/'sequencia-liberada.png'))
    page.get_by_role('tab',name='Consolidado',exact=True).click();year=page.locator('[data-pl-projection-year]');year.select_option('2026');projected=page.locator('[data-pl-summary-group=projection] .pl-metric strong').first.inner_text();assert projected.endswith('1.230,00');page.get_by_role('button',name='Gerar PDF',exact=True).click();assert page.locator('[data-pl-report] .pl-report-projection strong').inner_text()==projected;page.pdf(path=str(OUT/'sequencia-liberada.pdf'),format='A4',landscape=True);page.evaluate("dispatchEvent(new Event('afterprint'))");assert not errors,errors
   finally:ctx.close()

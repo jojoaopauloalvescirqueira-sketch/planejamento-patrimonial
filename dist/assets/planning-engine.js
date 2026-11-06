@@ -602,6 +602,44 @@
     const plan=previous&&!options.newPlan?revisePlan(previous,c,options):createPlan(c,{id:'stop-preview',now:'2026-01-01T00:00:00.000Z'});
     return {plan,didactic:!valid,newPlan:!previous||options.newPlan===true||!valid};
   }
+  // Chart-only comparison. Original reference snapshots are validated by
+  // sheetView before this read; no forecast is promoted into the actual rows.
+  function comparisonChartSeries(model, accounts, today, begin, end) {
+    const rows = model.rows || [], reference = model.referenceRows || [];
+    const inPeriod = p => p.month >= begin && p.month < end;
+    const points = field => rows.map(r => ({month:r.month,value:field(r)})).filter(inPeriod);
+    const confirmed = points(r => r.finalized && r.projectionStatus !== 'WAITING_CLOSURE' && finite(r.closeUsd) ? r.closeUsd : null);
+    let plannedTotal = 0;
+    const planned = reference.map(r => {
+      plannedTotal = finite(plannedTotal) && finite(r.contributionUsd) && finite(plannedTotal+r.contributionUsd) ? plannedTotal+r.contributionUsd : null;
+      return {month:r.month,value:finite(r.closeUsd)?r.closeUsd:null,contributions:plannedTotal};
+    });
+    const running = accounts.map(a => ({plan:a.plan,total:0,complete:true,blockingMonth:null}));
+    const registered = rows.map(r => {
+      if (r.month > today) return {month:r.month,value:null,knownValue:null,status:'NOT_RECORDED',blockingMonth:null};
+      const participants = running.filter(a => r.month >= a.plan.startMonth);
+      for (const a of participants) {
+        if (r.month > addMonths(a.plan.startMonth,119)) continue;
+        const flows = a.plan.contributions.filter(f => f.month === r.month);
+        const valid = flows.every(validFlowUsd), sum = valid ? flows.reduce((n,f)=>n+f.usd,0) : null;
+        a.total = finite(a.total) && finite(sum) && finite(a.total+sum) ? a.total+sum : null;
+        const noMovement = !!a.plan.monthlyInputs?.noMovement?.[r.month]?.contribution;
+        // Legacy confirmed closures explicitly reviewed zero cashflows too.
+        const legacyZero = a.plan.closures[r.month]?.confirmed === true && a.plan.closures[r.month]?.confirmFlows === true;
+        if (!valid || !flows.some(f=>f.usd>0) && !noMovement && !legacyZero) { a.complete=false; a.blockingMonth=a.blockingMonth||r.month; }
+      }
+      const known = participants.length && participants.every(a=>finite(a.total)) ? participants.reduce((n,a)=>n+a.total,0) : null;
+      const complete = participants.length && participants.every(a=>a.complete) && finite(known);
+      return {month:r.month,value:complete?known:null,knownValue:finite(known)?known:null,status:complete?'AVAILABLE':'INCOMPLETE',blockingMonth:participants.map(a=>a.blockingMonth).filter(Boolean).sort()[0]||null};
+    }).filter(inPeriod);
+    return [
+      {id:'confirmed',group:'confirmed',label:'Histórico confirmado',basis:'CONFIRMED_CLOSURES',points:confirmed},
+      {id:'planning',group:'planning',label:'Projeção do planejamento',basis:'FORM_REFERENCE',points:planned.map(r=>({month:r.month,value:r.value})).filter(inPeriod)},
+      {id:'registered-contributions',group:'contributions',label:'Aportes registrados',basis:'ACTUAL_LEDGER',points:registered},
+      {id:'planned-contributions',group:'contributions',label:'Aportes previstos',basis:'FORM_REFERENCE',points:planned.map(r=>({month:r.month,value:r.contributions})).filter(inPeriod)}
+    ];
+  }
+
   function sheetView(envelope, options) {
     options = options || {};
     const issues = validateEnvelope(envelope);
@@ -701,7 +739,7 @@
     model.sheet={summary:Object.assign({},c,{contributionsUsd:through?c.contributionsUsd:null,resultUsd:through?c.resultUsd:null,
         initialUsd:sourceAccounts.reduce((n,a)=>n+a.plan.initialUsd,0),averageRate:model.priceAverage?.rate??null,quoteRate:latestQuote}),
       projection:{...(model.projectionStatus?{projectionStatus:model.projectionStatus,blockingMonth:model.blockingMonth}:{}),year,month:projected?.month||null,closeUsd:projected?.closeUsd??null,closeBrl:projected?.closeBrl??null,years},
-      chart:{...(model.projectionStatus?{projectionStatus:model.projectionStatus,blockingMonth:model.blockingMonth}:{}),period:chosen.id,options:chartOptions,rows:chartRows},realChart:{mode:realChartMode,options:realChartOptions.map(label=>({id:label,label})),rows:realChartRows},
+      chart:{...(model.projectionStatus?{projectionStatus:model.projectionStatus,blockingMonth:model.blockingMonth}:{}),period:chosen.id,options:chartOptions,rows:chartRows,series:comparisonChartSeries(model,sourceAccounts,today,begin,end)},realChart:{mode:realChartMode,options:realChartOptions.map(label=>({id:label,label})),rows:realChartRows},
       table:{mode:tableMode,indicator,years:tableYears,annual:annualRows,monthly},
       comparison:{status:comparisonStatus,through,rows:comparisonRows,message:comparisonStatus==='Comparável'?'Comparação no mesmo fechamento':comparisonStatus},
       goals:model.goals, gainWithIncrease,monthlyRows,phaseTotals,

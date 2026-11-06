@@ -114,6 +114,18 @@ def form_journey(page):
     page.get_by_role('button', name='Ir para o Consolidado', exact=True).click()
     check(page.locator('#planning [role=tab][aria-selected=true]').inner_text() == 'Consolidado',
           'native success explicitly enters Consolidado')
+    selector=page.locator('#planning [data-pl-account]')
+    check(selector.input_value() == '', 'Consolidado defaults to Todas as contas after creating a plan')
+    selected=page.evaluate('JPWPlanning.queries.snapshot().accounts[0].id')
+    selector.select_option(selected)
+    page.locator('#planning [data-pl-view=monthly]').click()
+    check(selector.input_value() == selected, 'Monthly retains an individual account')
+    page.locator('#planning [data-pl-view=consolidated]').click()
+    check(selector.input_value() == selected, 'Explicit account choice survives navigation in this session')
+    selector.select_option('')
+    page.locator('#planning [data-pl-view=monthly]').click()
+    page.locator('#planning [data-pl-view=consolidated]').click()
+    check(selector.input_value() == '', 'Monthly context does not replace Consolidado Todas as contas')
     check(page.locator('#planning').get_by_role('tab').all_text_contents() ==
           ['Comece aqui', 'Consolidado', 'Preenchimento mensal'],
           'first confirmed plan releases the three current visible pages')

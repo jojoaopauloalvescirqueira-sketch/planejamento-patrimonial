@@ -7,7 +7,8 @@ from playwright.sync_api import sync_playwright
 ROOT=Path(__file__).resolve().parents[1];OUT=ROOT/'outputs/new-form-currency';OUT.mkdir(exist_ok=True,parents=True)
 class Quiet(SimpleHTTPRequestHandler):
  def log_message(self,*_):pass
-server=ThreadingHTTPServer(('127.0.0.1',0),functools.partial(Quiet,directory=str(ROOT/'dist')));threading.Thread(target=server.serve_forever,daemon=True).start();url=f'http://127.0.0.1:{server.server_port}/';result={}
+class Server(ThreadingHTTPServer):request_queue_size=128
+server=Server(('127.0.0.1',0),functools.partial(Quiet,directory=str(ROOT/'dist')));threading.Thread(target=server.serve_forever,daemon=True).start();url=f'http://127.0.0.1:{server.server_port}/';result={}
 try:
  with sync_playwright() as pw:
   b=pw.chromium.launch(headless=True,executable_path=os.environ.get('PP_CHROMIUM'));c=b.new_context(viewport={'width':1440,'height':1000},timezone_id='America/Sao_Paulo');c.route('https://api.frankfurter.dev/**',lambda r:r.fulfill(content_type='application/json',body=json.dumps({'base':'USD','quote':'BRL','date':'2026-11-05','rate':5})));p=c.new_page();p.clock.set_fixed_time(datetime(2026,11,5,15,tzinfo=timezone.utc));p.goto(url);p.wait_for_selector('[data-pl-start]');errors=[];p.on('pageerror',lambda e:errors.append(str(e)));cases=[]
