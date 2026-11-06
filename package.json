@@ -1,1 +1,13 @@
-{"name":"planejamento-patrimonial","version":"0.1.0","private":true,"description":"Planejamento Patrimonial independente, com dados locais e backup próprio.","scripts":{"build":"node tools/build.js","check":"node tools/check.js","test":"node tools/test.js","serve":"python3 -m http.server 8010 --bind 127.0.0.1 --directory dist"}}
+{
+  "name": "planejamento-patrimonial",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Planejamento Patrimonial independente, com dados locais e backup próprio.",
+  "scripts": {
+    "build": "node tools/build.js",
+    "check": "node tools/check.js",
+    "test": "node tools/test.js",
+    "serve": "python3 -m http.server 8010 --bind 127.0.0.1 --directory dist",
+    "package:netlify": "node tools/package-netlify.js"
+  }
+}

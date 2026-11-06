@@ -104,3 +104,17 @@ O editor de Resultado apresenta USD e percentual derivado lado a lado, sem ediç
 ### Aparência clara
 
 A interface oferece somente o tema claro, sem seletor de tema. Preferências escuras antigas permanecem recuperáveis, mas não são aplicadas ao abrir. Backups antigos continuam aceitos; a restauração explícita aplica o tema claro e preserva as demais preferências e rascunhos. As exportações normais usam light. A marca mantém o ícone azul à esquerda do título e a assinatura by JP Wealth.
+
+## Publicação no Netlify
+
+O projeto tem configuração própria em `netlify.toml`: comando `npm run build`, pasta publicada `dist` e Node24.22.2. `dist/` contém os arquivos-fonte estáticos versionados do aplicativo: ela deve acompanhar o código e não pode ser omitida do pacote. Um diretório vazio não substitui o aplicativo.
+
+Para gerar o pacote completo a partir desta pasta, use:
+
+```sh
+npm run package:netlify
+```
+
+Envie **`outputs/netlify/planejamento-patrimonial-netlify-projeto.zip`** no fluxo que constrói o projeto no Netlify. Ao extrair, `netlify.toml`, `package.json`, `tools/` e `dist/` ficam juntos na raiz. Se a interface pedir uma pasta, envie essa pasta completa. A pasta de publicação é `dist`, não `outputs` nem uma pasta extraída de um pacote estático antigo.
+
+O ZIP inclui código, documentação e testes para manter o projeto completo, sem Git, outputs, caches, arquivos de ambiente, cópias de recuperação ou dados do navegador. `manifest.json`, ao lado do ZIP, registra versão e hashes. A geração é local e não faz commit, push ou deploy. Para envio manual de arquivos já prontos, somente o conteúdo de `dist/` é publicado.

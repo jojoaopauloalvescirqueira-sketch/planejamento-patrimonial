@@ -1,8 +1,18 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const root=path.resolve(__dirname,'..'),indexPath=path.join(root,'dist/index.html');
+// dist contains this app's versioned source, not disposable build output.
+const distPath=path.join(root,'dist'),assetsPath=path.join(distPath,'assets');
+function incomplete(name){console.error('Pacote de projeto incompleto: falta '+name+'. Inclua a pasta dist original. Gere o ZIP completo com npm run package:netlify na cópia completa do projeto.');process.exit(1);}
+if(!fs.existsSync(indexPath)||!fs.statSync(indexPath).isFile())incomplete('dist/index.html');
+if(!fs.existsSync(assetsPath)||!fs.statSync(assetsPath).isDirectory())incomplete('dist/assets');
+for(const [,url] of fs.readFileSync(indexPath,'utf8').matchAll(/(?:src|href)="((?:assets\/|favicon)[^"?]+)(?:\?[^"]*)?"/g)){
+  if(url==='assets/version.js')continue;
+  const file=path.resolve(distPath,url);
+  if(!file.startsWith(distPath+path.sep)||!fs.existsSync(file)||!fs.statSync(file).isFile())incomplete('dist/'+url);
+}
 function canonicalIndex(text){return text.replace(/((?:src|href)="(?:assets\/[^"?]+|favicon\.svg))(?:\?v=[a-f0-9]{16})?("\s*\/?>|"\s)/g,'$1$2');}
-function walk(dir){return fs.readdirSync(dir,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(dir,e.name)):[path.join(dir,e.name)]);}
+function walk(dir){return fs.readdirSync(dir,{withFileTypes:true}).filter(e=>e.name!=='.DS_Store'&&!e.name.startsWith('._')).flatMap(e=>e.isDirectory()?walk(path.join(dir,e.name)):[path.join(dir,e.name)]);}
 const files=walk(path.join(root,'dist')).filter(p=>!p.endsWith('/version.js')).sort();
 const hash=crypto.createHash('sha256').update('asset-query-v1\0');for(const p of files)hash.update(path.relative(root,p)+'\0').update(p===indexPath?canonicalIndex(fs.readFileSync(p,'utf8')):fs.readFileSync(p));
 const id=hash.digest('hex').slice(0,16),index=canonicalIndex(fs.readFileSync(indexPath,'utf8')).replace(/((?:src|href)="(?:assets\/[^"?]+|favicon\.svg))(")/g,'$1?v='+id+'$2');
