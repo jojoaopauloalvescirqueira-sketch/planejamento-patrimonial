@@ -18,5 +18,6 @@ if(status==='PASS'){
  for(const f of ['planning_engine_test.js','planning_parity_engine_test.js','planning_state_test.js','planning_quote_test.js','storage.test.js','monthly.test.js','monthly_view.test.js','closure_sequence.test.js','annual.test.js','independent_month.test.js','chart_series.test.js','netlify_package.test.js'])if(!/PASS|"passed":\d+/.test(fs.readFileSync(path.join(out,'full-'+f+'.log'),'utf8')))status='FAIL';
 }
 function files(dir){return fs.readdirSync(dir,{withFileTypes:true}).flatMap(e=>e.isDirectory()?files(path.join(dir,e.name)):[path.join(dir,e.name)]);}
-const hashes={};for(const dir of ['dist','tests','tools','docs'])for(const f of files(path.join(root,dir)).filter(f=>!f.includes('/__pycache__/')))hashes[path.relative(root,f)]=crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+const hashes={};for(const dir of ['src','dist','tests','tools','docs'])for(const f of files(path.join(root,dir)).filter(f=>!f.includes('/__pycache__/')))hashes[path.relative(root,f)]=crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+for(const f of ['package.json','netlify.toml','requirements-dev.txt','README.md','.gitignore'])hashes[f]=crypto.createHash('sha256').update(fs.readFileSync(path.join(root,f))).digest('hex');
 fs.writeFileSync(path.join(out,'full-result.json'),JSON.stringify({status,candidate:fs.readFileSync(path.join(root,'dist/assets/version.js'),'utf8').match(/PP_BUILD="([^"]+)"/)[1],results,hashes},null,2));console.log('FULL',status);process.exitCode=status==='PASS'?0:1;

@@ -3,7 +3,7 @@
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),{crc32}=require('node:zlib');
 require('./build.js');
 const root=path.resolve(__dirname,'..'),out=path.join(root,'outputs/netlify');
-const roots=['.gitignore','AGENTS.md','README.md','package.json','requirements-dev.txt','netlify.toml','dist','tools','docs','tests'];
+const roots=['.gitignore','AGENTS.md','README.md','package.json','requirements-dev.txt','netlify.toml','src','tools','docs','tests'];
 const excluded=name=>name==='.DS_Store'||name.startsWith('._')||['__pycache__','outputs','node_modules','.git','.env','.openai'].includes(name);
 const files=[];
 function collect(relative){
@@ -25,7 +25,7 @@ for(const relative of files){
   manifest.push({path:name.toString(),bytes:data.length,sha256:crypto.createHash('sha256').update(data).digest('hex')});
 }
 const directory=Buffer.concat(central),end=Buffer.alloc(22);end.writeUInt32LE(0x06054b50,0);end.writeUInt16LE(files.length,8);end.writeUInt16LE(files.length,10);end.writeUInt32LE(directory.length,12);end.writeUInt32LE(offset,16);
-const archive=Buffer.concat([...local,directory,end]),filename=path.join(out,'planejamento-patrimonial-netlify-projeto.zip');
+const archive=Buffer.concat([...local,directory,end]),filename=path.join(out,'planejamento-patrimonial-netlify-fonte.zip');
 fs.mkdirSync(out,{recursive:true});const temporary=filename+'.tmp';fs.writeFileSync(temporary,archive);fs.renameSync(temporary,filename);
 fs.writeFileSync(path.join(out,'manifest.json'),JSON.stringify({candidate:fs.readFileSync(path.join(root,'dist/assets/version.js'),'utf8').match(/PP_BUILD="([^"]+)"/)[1],sha256:crypto.createHash('sha256').update(archive).digest('hex'),files:manifest},null,2)+'\n');
-console.log('NETLIFY ZIP '+filename+' ('+files.length+' arquivos; dist/index.html incluído)');
+console.log('NETLIFY ZIP '+filename+' ('+files.length+' arquivos; src/site incluído; dist será gerada pelo build)');

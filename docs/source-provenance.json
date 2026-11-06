@@ -131,5 +131,11 @@
     "scope": "Owner-approved header attribution; standalone code, storage and hosting remain separate.",
     "icon": "Original local blue three-bar mark restored to the left of the product title.",
     "appearance": "Light only; legacy dark backup metadata remains readable."
+  },
+  "buildSources": {
+    "canonicalDirectory": "src/site",
+    "publishedDirectory": "dist",
+    "generatedFile": "assets/version.js",
+    "policy": "Canonical sources mechanically copied from the approved static application; build regenerates dist and preserves the public hash contract. Financial module bytes, original source hashes, formulas and persistence unchanged."
   }
 }

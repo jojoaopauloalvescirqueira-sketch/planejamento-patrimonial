@@ -1,0 +1,36 @@
+/* Standalone presentation foundation. Planning rules live in planning.css. */
+:root{
+  --bg:#F2F4F7;--panel:#FFFFFF;--panel-2:#F6F7F9;--line:#CED4DE;
+  --ink:#182333;--ink-dim:#526071;--ink-faint:#657184;
+  --indigo:#007AFF;--violet:#0068D6;--indigo-deep:#E5F1FF;
+  --f1:#16743F;--f1-bg:#E8F3EB;--f2:#7A6410;--f2-bg:#F7F2DA;
+  --f3:#BE4517;--f3-bg:#FBEBE3;--f4:#C22B2B;--f4-bg:#FBEAEA;
+  --good:#16743F;--warn:#7A6410;--danger:#C22B2B;
+  --accent-tint:rgba(0,104,214,.08);--accent:var(--violet);--success:var(--good);
+  --grid:#E4E8EE;--tab-bg:#E7EAEF;--track:#E7EAEF;--chip-warn-bg:#F7F2DA;--chip-warn:#7A6410;
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,system-ui,sans-serif;
+  --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+:root[data-theme=dark]{
+  --bg:#10151D;--panel:#18212D;--panel-2:#202C3B;--line:#465468;
+  --ink:#F2F5FA;--ink-dim:#C0CAD8;--ink-faint:#A2AFC2;
+  --indigo:#0A84FF;--violet:#409CFF;--indigo-deep:#132F4F;
+  --f1:#00C853;--f1-bg:#062012;--f2:#FFD400;--f2-bg:#231D00;
+  --f3:#FF7A18;--f3-bg:#2A1400;--f4:#FF3B30;--f4-bg:#2A0B09;
+  --good:#00C853;--warn:#FFD400;--danger:#FF3B30;
+  --accent-tint:rgba(64,156,255,.12);--grid:#2A3747;--tab-bg:#0C1118;--track:#2A3747;--chip-warn-bg:#231D00;--chip-warn:#FFD400;color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{font-family:var(--sans);color:var(--ink);background:var(--bg);line-height:1.5;-webkit-text-size-adjust:100%}
+body{margin:0;min-width:0;background:var(--bg)}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+button:disabled{cursor:default}
+input,select,textarea{min-width:0}
+a{color:var(--violet)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid var(--violet);outline-offset:3px}
+[hidden]{display:none!important}
+svg{max-width:100%}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+@media print{html,body{color:#17202b;background:#fff}}

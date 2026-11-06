@@ -107,14 +107,18 @@ A interface oferece somente o tema claro, sem seletor de tema. Preferências esc
 
 ## Publicação no Netlify
 
-O projeto tem configuração própria em `netlify.toml`: comando `npm run build`, pasta publicada `dist` e Node24.22.2. `dist/` contém os arquivos-fonte estáticos versionados do aplicativo: ela deve acompanhar o código e não pode ser omitida do pacote. Um diretório vazio não substitui o aplicativo.
+Os fontes canônicos ficam em **`src/site/`**. O comando **`npm run build`** gera a pasta **`dist/`** inteira a partir deles, mesmo que dist ainda não exista. Edite os fontes em src/site e reconstrua; dist é a saída publicada. O build prepara a saída completa antes de substituir a anterior e não cria um site vazio quando faltam fontes.
 
-Para gerar o pacote completo a partir desta pasta, use:
+A configuração `netlify.toml` define `npm run build`, publicação em `dist` e Node24.22.2. Fórmulas, precisão, armazenamento e os bytes dos módulos financeiros foram preservados nesta organização. O identificador do aplicativo usa o mesmo contrato de hashes anterior.
+
+Para gerar o pacote de código-fonte a partir desta pasta:
 
 ```sh
 npm run package:netlify
 ```
 
-Envie **`outputs/netlify/planejamento-patrimonial-netlify-projeto.zip`** no fluxo que constrói o projeto no Netlify. Ao extrair, `netlify.toml`, `package.json`, `tools/` e `dist/` ficam juntos na raiz. Se a interface pedir uma pasta, envie essa pasta completa. A pasta de publicação é `dist`, não `outputs` nem uma pasta extraída de um pacote estático antigo.
+Envie **`outputs/netlify/planejamento-patrimonial-netlify-fonte.zip`** no fluxo de build do Netlify. Ele inclui `src/site/`, `tools/`, `netlify.toml`, package.json, documentação e testes. **Não depende de dist no upload:** o Netlify a gera ao executar npm run build. O teste de empacotamento extrai o ZIP sem dist e executa o build e os checks da aplicação.
 
-O ZIP inclui código, documentação e testes para manter o projeto completo, sem Git, outputs, caches, arquivos de ambiente, cópias de recuperação ou dados do navegador. `manifest.json`, ao lado do ZIP, registra versão e hashes. A geração é local e não faz commit, push ou deploy. Para envio manual de arquivos já prontos, somente o conteúdo de `dist/` é publicado.
+A pasta publicada continua sendo dist. Para um deploy manual sem build, use o conteúdo já gerado de dist; o ZIP terminado em -fonte.zip é para o fluxo que executa o build. Os pacotes estáticos antigos e o ZIP terminado em -projeto.zip não representam esta organização corrigida.
+
+Outputs, caches, Git, ambiente, recuperações e dados do navegador não entram no ZIP. O manifest.json ao lado dele registra versão e hashes. A geração é local e não faz commit, push ou deploy.

@@ -16,3 +16,11 @@ assert.ok(!read('dist/assets/storage.js').includes('localStorage.clear('));
 console.log('PASS source provenance, syntax, asset closure, independent branding/network, storage scope');
 
 assert.ok(index.indexOf('annual-review.js')>index.indexOf('planning-engine.js')&&index.indexOf('annual-review.js')<index.indexOf('storage.js'),'Annual validation loads before persistence');
+
+// The published tree is generated solely from canonical, versioned sources.
+function siteFiles(dir){return fs.readdirSync(dir,{withFileTypes:true}).filter(e=>e.name!=='.DS_Store'&&!e.name.startsWith('._')).flatMap(e=>e.isDirectory()?siteFiles(path.join(dir,e.name)):[path.join(dir,e.name)]);}
+const sourceDir=path.join(root,'src/site'),publicDir=path.join(root,'dist');
+const canonicalHTML=s=>s.replace(/((?:src|href)="(?:assets\/[^"?]+|favicon\.svg))(?:\?v=[a-f0-9]{16})?("\s*\/?>|"\s)/g,'$1$2');
+for(const file of siteFiles(sourceDir)){const relative=path.relative(sourceDir,file),target=path.join(publicDir,relative);assert.ok(fs.existsSync(target),'Generated output '+relative);if(relative==='index.html')assert.equal(canonicalHTML(fs.readFileSync(target,'utf8')),fs.readFileSync(file,'utf8'),'Canonical source index');else assert.deepEqual(fs.readFileSync(target),fs.readFileSync(file),'Canonical source '+relative);}
+assert.equal(siteFiles(publicDir).length,siteFiles(sourceDir).length+1,'Only version.js is generated beyond the sources');
+console.log('PASS canonical sources match generated application');
