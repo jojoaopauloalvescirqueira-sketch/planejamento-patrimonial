@@ -37,7 +37,8 @@
   function currentAccount(){var id=dialog&&dialog.__native?dialog.__accountId:accountId;return id?api.queries.account(id):null;}
   function read(){var market=window.JPWMarket&&JPWMarket.usdBrl;if(selectedMonth&&market&&market.getHistorical){var cached=market.getHistorical(selectedMonth);if(cached)historicalQuotes[selectedMonth]=cached;}return api.queries.view({accountId:accountId||undefined,month:monthNow(),quote:quote(),historicalQuotes:historicalQuotes});}
   function masterAccountId(){return view==='consolidated'?accountId:viewAccounts.consolidated;}
-  function readMasterSheet(){return api.queries.sheetView({accountId:masterAccountId()||undefined,month:monthNow(),quote:quote(),historicalQuotes:historicalQuotes,projectionYear:projectionYear,chartPeriod:chartPeriod,tableMode:tableMode,indicator:indicator,realChartMode:realChartMode});}
+  function masterSheetOptions(){return {accountId:masterAccountId()||undefined,month:monthNow(),quote:quote(),historicalQuotes:historicalQuotes,projectionYear:projectionYear,chartPeriod:chartPeriod,tableMode:tableMode,indicator:indicator,realChartMode:realChartMode};}
+  function readMasterSheet(){return api.queries.sheetView(masterSheetOptions());}
   function masterIndividualId(){var selected=masterAccountId(),accounts=activeAccounts();if(selected&&accounts.some(function(a){return a.id===selected;}))return selected;return accounts.length===1?accounts[0].id:'';}
   function navigateMaster(next){var master=masterAccountId();if((next!==view||master&&master!==accountId)&&!resolveInline(function(){navigateMaster(next);}))return false;if(!selectView(next))return false;if(master){accountId=master;viewAccounts[view]=master;render(true);}return true;}
   function readSheet(){return api.queries.sheetView?api.queries.sheetView({accountId:accountId||undefined,month:monthNow(),quote:quote(),historicalQuotes:historicalQuotes,projectionYear:projectionYear,chartPeriod:chartPeriod,tableMode:tableMode,indicator:indicator,realChartMode:realChartMode}):read();}
@@ -933,12 +934,99 @@
     return false;
   }
 
+  function reportGoal(label,saved,goal){
+    if(!saved)return '<p><strong>'+h(label)+'</strong> · Meta não informada.</p>';
+    var value=money(saved.value,saved.currency)+(saved.currency==='BRL'?' ('+money(goal.usd)+' na simulação)':'');
+    var deadline=goal.month?(goal.status==='ACHIEVED'?'Atingida em ':'Prazo atualizado: ')+monthLabel(goal.month):
+      goal.waitingForClosure?'Prazo atualizado aguarda fechamento':goal.status==='NOT_REACHED'?'Fora dos 120 meses':'Prazo atualizado indisponível';
+    var original=goal.referenceMonth&&!goal.goalChanged?' · Prazo original: '+monthLabel(goal.referenceMonth):'';
+    return '<p><strong>'+h(label)+'</strong> · '+h(value)+'/mês · Patrimônio necessário: '+h(money(goal.requiredCapitalUsd))+
+      '<br>'+h(deadline+original)+'</p>';
+  }
+  function reportPlan(account,model,rows,showPosition){
+    var plan=account.plan,profile=api.engine.profileView(plan.profileId),last=model.rows.at(-1);
+    var original=model.referenceRows.length===120?model.referenceRows.at(-1):null;
+    var finalized=rows.filter(function(row){return row.finalized;}).length;
+    var pending=rows.find(function(row){return !row.finalized;});
+    var progress=(rows.length?finalized+' de '+rows.length+(rows.length===1?' mês finalizado':' meses finalizados'):'Nenhum mês iniciado')+(pending?' · Primeiro fechamento pendente: '+monthLabel(pending.month):'');
+    var through=model.confirmedThrough?'Saldo calculável até '+monthLabel(model.confirmedThrough):
+      model.confirmed.basis==='INITIAL_CAPITAL'?'Capital inicial cadastrado · aguardando o primeiro fechamento':'Sem fechamento com saldo calculável';
+    var confirmed=model.confirmed,individual=showPosition&&model.confirmedThrough?
+      '<p>Patrimônio confirmado: '+h(money(confirmed.balanceUsd))+' · Aportes: '+h(money(confirmed.contributionsUsd))+
+      ' · Saques: '+h(money(confirmed.withdrawalsUsd))+' · Resultado: '+h(money(confirmed.resultUsd))+'</p>':'';
+    return '<article class="pl-report-plan"><h3>'+h(account.name)+'</h3>'+
+      '<p>'+h(monthLabel(plan.startMonth)+' a '+monthLabel(last?.month))+' · 120 meses</p>'+
+      '<dl class="pl-report-premises"><div><dt>Capital inicial</dt><dd>'+h(money(plan.initialUsd))+'</dd></div>'+
+      '<div><dt>Aporte mensal previsto</dt><dd>'+h(money(plan.monthlyContributionUsd))+'</dd></div>'+
+      '<div><dt>Perfil · taxa mensal</dt><dd>'+h(nativeProfileName(profile)+' · '+percent(profile?.rate))+'</dd></div></dl>'+
+      '<div class="pl-report-goals">'+reportGoal('Padrão de vida',plan.goals?.adequate,model.goals.adequate)+
+      reportGoal('Renda desejada',plan.goals?.ideal,model.goals.ideal)+'</div>'+
+      '<p class="pl-report-original"><strong>Patrimônio projetado ao fim do plano</strong> · '+
+      h(Number.isFinite(original?.closeUsd)?money(original.closeUsd)+' em '+monthLabel(original.month)+' · Simulação original do formulário':'Simulação original indisponível')+'</p>'+
+      '<p class="pl-report-coverage">'+h(progress+' · '+through)+'</p>'+individual+'</article>';
+  }
+  function reportMonthly(account,rows,today){
+    var title='Execução mensal · '+account.name;
+    if(!rows.length)return '<section class="pl-report-monthly"><h3>'+h(title)+'</h3><p>O plano ainda não tem meses decorridos.</p></section>';
+    var body=rows.map(function(row){
+      var inputs=api.monthlyInputs.status(account.plan,row.month),blocked=!!row.blockingMonth;
+      var status=row.finalized?(Number.isFinite(row.closeUsd)?'Finalizado':'Finalizado · saldo pendente'):row.month===today?'Em andamento':'Pendente';
+      var missing=[!inputs.result?'resultado':'',!inputs.contribution?'aporte':'',!inputs.withdrawal?'saque':''].filter(Boolean);
+      var detail=[blocked?waitingText(row):'',!row.finalized&&missing.length?'A preencher: '+missing.join(', ')+'.':'',
+        !row.finalized&&!blocked&&Number.isFinite(row.closeUsd)?'Patrimônio parcial.':'',errorsText(row.issues)].filter(Boolean).join(' ');
+      var cells=[money(row.openUsd),money(row.resultUsd),percent(inputs.result&&row.openUsd>0?row.rate:null),
+        money(inputs.contribution||row.finalized?row.contributionUsd:null),money(inputs.withdrawal||row.finalized?row.withdrawalUsd:null),money(row.closeUsd)];
+      return '<tr data-pl-report-month="'+h(row.month)+'"><th scope="row">'+h(monthLabel(row.month))+'</th>'+
+        cells.map(function(value){return '<td>'+h(value)+'</td>';}).join('')+'<td><strong>'+h(status)+'</strong>'+
+        (detail?'<small>'+h(detail)+'</small>':'')+'</td></tr>';
+    }).join('');
+    return '<table class="pl-report-monthly" aria-label="'+h(title)+'"><colgroup><col span="7"><col class="pl-report-state-col"></colgroup><thead>'+
+      '<tr><th colspan="8" class="pl-report-table-title">'+h(title)+'</th></tr><tr>'+
+      ['Mês','Saldo inicial','Resultado','Rentabilidade','Aportes','Saques','Patrimônio','Situação'].map(function(label){
+        return '<th scope="col">'+label+'</th>';
+      }).join('')+'</tr></thead><tbody>'+body+'</tbody></table>';
+  }
   function printReport(){
-    closeSubdialog();var model=readMasterSheet(),sheet=model.sheet||{},c=sheet.summary||{},projection=sheet.projection||{},chart=sheet.chart||{},box=document.createElement('section');box.dataset.plReport='';box.className='pl-print-report';
-    var previousHover=chartHover,chartMarkup=nativeChartHTML(model),chartDOM=document.createElement('div');chartHover=previousHover;chartDOM.innerHTML=chartMarkup;var svg=chartDOM.querySelector('svg[data-pl-chart]');var chartLegend=chartDOM.querySelector('.pl-chart-series-legend'),chartNotes=chartDOM.querySelector('.pl-chart-notes'),chartEmpty=chartDOM.querySelector('.pl-chart-empty');
-    var periodOption=(chart.options||[]).find(function(p){return p.id===chart.period;});
-    box.innerHTML='<header class="pl-report-header"><p>Planejamento Patrimonial / Relatório</p><h1>Planejamento Patrimonial</h1><p>'+h(masterAccountId()?model.name:'Todas as contas')+'</p><p>'+h(model.confirmedThrough?'Fechamento confirmado · '+monthLabel(model.confirmedThrough):c.basis==='INITIAL_CAPITAL'?'Capital inicial cadastrado · aguardando o primeiro fechamento':'Sem fechamento confirmado')+' · Emissão: '+h(new Date().toLocaleString('pt-BR'))+'</p></header><div class="pl-metrics">'+metric('PATRIMÔNIO CONFIRMADO',money(c.balanceUsd),c.basis==='INITIAL_CAPITAL'?'Capital inicial cadastrado; sem resultados de meses abertos':'Saldo no último fechamento')+metric('APORTES CONFIRMADOS',money(c.contributionsUsd),'Acumulados até o mesmo fechamento')+metric('RESULTADO CONFIRMADO',money(c.resultUsd),'Ganhos e perdas, sem aportes')+'</div><div class="pl-report-projection"><span>Projeção · '+h(monthLabel(projection.month))+'</span><strong>'+h(money(projection.closeUsd))+'</strong>'+projectionNotice(model)+'<p>Capital inicial cadastrado: '+h(money(c.initialUsd))+' · base cadastrada do plano.</p></div><h2>EVOLUÇÃO DO PATRIMÔNIO</h2><p>'+h(periodOption&&periodOption.label||'Plano completo')+'</p>'+(svg?svg.outerHTML:chartEmpty?chartEmpty.outerHTML:'<p>Trajetória indisponível para os dados atuais.</p>')+(chartLegend?chartLegend.outerHTML:'')+(chartNotes?chartNotes.outerHTML:'')+'<p>'+h(model.projectionStatus==='WAITING_CLOSURE'?waitingText(model):model.status==='INVALID'?'Projeção pendente: revise os dados.':model.status==='PROVISIONAL'?'Projeção provisória: há resultados vazios.':'Projeção estimada, sem garantia.')+'</p><footer><p>Método: entradas mensais manuais. O retorno incide sobre o saldo de abertura; o aporte rende a partir do mês seguinte.</p><p>Valores nominais em USD. Campos reais vazios continuam pendentes. A trajetória atualizada aguarda os fechamentos. A simulação original do formulário é independente e não representa saldo realizado. Premissas não criam lançamentos. Somente a sequência sem lacunas fornece saldos confirmados.</p><p>Planejamento Patrimonial · Planejamento Patrimonial com aportes · Documento de acompanhamento e simulação.</p></footer>';
-    var previous=host().querySelector('[data-pl-report]');if(previous)previous.remove();host().appendChild(box);window.addEventListener('afterprint',function(){box.remove();},{once:true});window.print();
+    closeSubdialog();
+    var root=host(),previous=root.querySelector('[data-pl-report]'),options=masterSheetOptions(),envelope;
+    if(previous)previous.remove();
+    try{envelope=PlanningStore.exportDocument().patrimonialPlanning;}
+    catch(error){root.querySelector('[data-pl-notice]').textContent='PDF indisponível. '+error.message;return;}
+    var accounts=(envelope?.accounts||[]).filter(function(account){return account.active&&(!options.accountId||account.id===options.accountId);});
+    if(!accounts.length){root.querySelector('[data-pl-notice]').textContent='PDF indisponível. Selecione um plano ativo.';return;}
+    var noticeBox=root.querySelector('[data-pl-notice]');
+    if(noticeBox.textContent.startsWith('PDF indisponível.'))noticeBox.textContent=notice;
+    options.balancePolicy='confirmed-projection';
+    var model=api.engine.sheetView(envelope,options),sheet=model.sheet,c=sheet.summary,projection=sheet.projection,chart=sheet.chart;
+    var plans=accounts.map(function(account){
+      var detail=options.accountId?model:model.accounts.find(function(item){return item.id===account.id;});
+      return {account:account,model:detail,rows:detail.rows.filter(function(row){return row.month<=options.month;})};
+    });
+    var box=document.createElement('section');box.dataset.plReport='';box.className='pl-print-report';
+    var previousHover=chartHover,chartMarkup=nativeChartHTML(model),chartDOM=document.createElement('div');chartHover=previousHover;chartDOM.innerHTML=chartMarkup;
+    var svg=chartDOM.querySelector('svg[data-pl-chart]'),chartLegend=chartDOM.querySelector('.pl-chart-series-legend'),
+      chartNotes=chartDOM.querySelector('.pl-chart-notes'),chartEmpty=chartDOM.querySelector('.pl-chart-empty');
+    var periodOption=chart.options.find(function(p){return p.id===chart.period;});
+    var through=model.confirmedThrough,basis=through?'Fechamento calculável até '+monthLabel(through):
+      c.basis==='INITIAL_CAPITAL'?'Capital inicial cadastrado · aguardando o primeiro fechamento':'Sem fechamento com saldo calculável';
+    box.innerHTML='<header class="pl-report-header"><p>Planejamento Patrimonial · Relatório</p><h1>Planejamento Patrimonial</h1><p>'+
+      h(options.accountId?model.name:'Todas as contas')+' · Emissão: '+h(new Date().toLocaleString('pt-BR'))+'</p></header>'+
+      '<section><h2>Resumo do planejamento</h2>'+plans.map(function(p){return reportPlan(p.account,p.model,p.rows,plans.length>1);}).join('')+'</section>'+
+      '<section class="pl-report-position"><h2>Posição confirmada</h2><p>'+h(basis)+'</p><div class="pl-metrics">'+
+      metric(c.basis==='INITIAL_CAPITAL'?'Capital inicial cadastrado':'Patrimônio confirmado',money(c.balanceUsd),'')+
+      metric('Aportes confirmados',money(c.contributionsUsd),'')+metric('Saques confirmados',money(through?c.withdrawalsUsd:null),'')+
+      metric('Resultado confirmado',money(c.resultUsd),'')+'</div></section>'+
+      '<section class="pl-report-projection"><h2>Projeção atualizada</h2><p>'+h(projection.month?monthLabel(projection.month):'Data indisponível')+
+      ' · <strong>'+h(money(projection.closeUsd))+'</strong></p>'+projectionNotice(model)+
+      (model.projectionStatus==='WAITING_CLOSURE'?'':'<p>'+h(model.status==='INVALID'?'Projeção indisponível. Revise os dados.':
+        model.status==='PROVISIONAL'?'Projeção provisória. Há resultados vazios.':'Estimativa sem garantia.')+'</p>')+'</section>'+
+      '<section><h2>Execução mensal</h2><p>Valores em US$. Registros de meses em aberto aguardam fechamento. O saldo depende da sequência de fechamentos.</p>'+
+      plans.map(function(p){return reportMonthly(p.account,p.rows,options.month);}).join('')+'</section>'+
+      '<section class="pl-report-chart"><h2>Evolução do patrimônio</h2><p>'+h(periodOption?.label||'Plano completo')+'</p>'+
+      (svg?svg.outerHTML:chartEmpty?chartEmpty.outerHTML:'<p>Trajetória indisponível para os dados atuais.</p>')+
+      (chartLegend?chartLegend.outerHTML:'')+(chartNotes?chartNotes.outerHTML:'')+
+      '<footer><p>Valores nominais. O retorno incide sobre o saldo de abertura e o aporte rende a partir do mês seguinte. A simulação original é independente da execução mensal.</p></footer></section>';
+    root.appendChild(box);window.addEventListener('afterprint',function(){box.remove();},{once:true});window.print();
   }
 
   function onClick(e){if(inlineClick(e))return;var root=host(),target=e.target.closest('button');if(target&&nativeClick(target))return;if(!target||!root.contains(target))return;if(target.dataset.plView){selectView(target.dataset.plView);return;}if(target.dataset.plFocusAccount){if(!resolveInline(function(){target.click();}))return;accountId=target.dataset.plFocusAccount;viewAccounts.consolidated=accountId;viewAccounts.monthly=accountId;viewAccounts.reference=accountId;render(true);return;}if(target.dataset.plSelectMonth){selectMonthlyDetails(target.dataset.plSelectMonth);return;}var action=target.dataset.plAction;if(inlineEditor&&(target.dataset.plFocusAccount||action&&['configure','create','edit','restart','archive','result','contribution','withdrawal','projection','finalize','reopen','correct','annul','restart-selected','edit-selected'].includes(action))&&!resolveInline(function(){target.click();}))return;if(!action&&!target.dataset.plChartToggle)return;

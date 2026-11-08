@@ -80,12 +80,103 @@ with sync_playwright() as pw:
   finally:c.close()
  run('light/dark320/390/820/1440 and low height:44px controls, keyboard tooltips and no horizontal overflow',layout)
  def pdf():
-  c,p,id,errors,network=boot()
+  c,p,id,errors,network=boot(start='2022-01')
   try:
-   p.locator('[data-pl-chart-toggle=confirmed]').click();p.locator('[data-pl-chart-toggle=contributions]').click();before=snapshot(p);p.evaluate('window.print=()=>{}');p.get_by_role('button',name='Gerar PDF',exact=True).click();r=p.locator('[data-pl-report]');assert r.locator('[data-pl-chart-series]').count()==1;assert r.locator('[data-pl-chart-series=planning]').get_attribute('d');assert 'Simulação do formulário — não representa saldo realizado' in r.inner_text().replace('\xa0',' ');assert r.locator('[data-pl-chart-key]').count()==1;assert r.locator('.pl-report-projection strong').inner_text().replace('\xa0',' ')=='—';p.pdf(path=str(OUT/'chart-report.pdf'),format='A4',landscape=True);p.evaluate("dispatchEvent(new Event('afterprint'))");assert snapshot(p)==before
+   def add_account(name,start):
+    return p.evaluate("""([name,startMonth])=>{
+      const r=JPWPlanning.commands.execute('createAccount',{name,startMonth,initialUsd:1000,profileId:'base',
+        monthlyContributionUsd:200,login:'LOGIN-OMITIR',goals:{adequate:{value:60,currency:'USD'},ideal:{value:100,currency:'USD'}}},JPWPlanning.queries.token());
+      if(!r.ok)throw Error(JSON.stringify(r));JPWPlanning.ui.render(true);return r.accountId
+    }""",[name,start])
+   def record_zero(account,month):
+    cmd(p,account,'recordResult',month,{'usd':0})
+    for kind in ['contribution','withdrawal']:
+     cmd(p,account,'confirmNoMovement',month,{'kind':kind,'confirmation':True})
+   def read_row(report,month):
+    return [value.replace('\xa0',' ') for value in report.locator(f'[data-pl-report-month="{month}"] td').all_inner_texts()]
+   def print_report():
+    p.get_by_role('button',name='Gerar PDF',exact=True).click()
+    return p.locator('[data-pl-report]')
+
+   cmd(p,id,'recordResult','2022-01',{'usd':-20})
+   cmd(p,id,'recordContribution','2022-01',{'usd':30,'brl':150})
+   cmd(p,id,'recordWithdrawal','2022-01',{'usd':10})
+   cmd(p,id,'finalizeMonth','2022-01',{'confirmFlows':True})
+   record_zero(id,'2022-03')
+   cmd(p,id,'finalizeMonth','2022-03',{'confirmFlows':True})
+   current=add_account('Conta em andamento','2026-11')
+   cmd(p,current,'recordResult','2026-11',{'usd':25})
+   cmd(p,current,'recordContribution','2026-11',{'usd':40,'brl':200})
+   add_account('Plano com início futuro','2027-01')
+   archived=add_account('Conta arquivada a omitir','2026-11')
+   cmd(p,archived,'archiveAccount','2026-11',{'confirmation':True})
+   p.locator('[data-pl-account]').select_option(id)
+   p.locator('[data-pl-chart-toggle=confirmed]').click()
+   p.locator('[data-pl-chart-toggle=contributions]').click()
+   p.locator('[data-pl-chart-period]').select_option('year:2027')
+   before=snapshot(p)
+   p.evaluate('()=>{window.__printCount=0;window.print=()=>{window.__printCount++}}')
+   r=print_report()
+   assert r.locator('[data-pl-chart-series]').count()==1
+   assert r.locator('[data-pl-chart-series=planning]').get_attribute('d')
+   assert r.locator('[data-pl-chart-key]').count()==1
+   assert '2027' in r.locator('.pl-report-chart > p').first.inner_text()
+   assert 'Simulação do formulário — não representa saldo realizado' in r.inner_text()
+   assert r.locator('.pl-report-projection strong').inner_text()=='—'
+   assert r.locator('.pl-report-plan').count()==1
+   assert 'US$ 259.450,90' in r.locator('.pl-report-original').inner_text().replace('\xa0',' ')
+   assert '2 de 59 meses finalizados' in r.locator('.pl-report-coverage').inner_text()
+   assert 'Primeiro fechamento pendente: fev.' in r.locator('.pl-report-coverage').inner_text()
+   assert r.locator('.pl-report-position .pl-metric strong').all_inner_texts()==p.evaluate("""()=>
+    ['balanceUsd','contributionsUsd','withdrawalsUsd','resultUsd'].map(key=>
+      new Intl.NumberFormat('pt-BR',{style:'currency',currency:'USD'}).format(
+        JPWPlanning.queries.sheetView({accountId:document.querySelector('[data-pl-account]').value}).sheet.summary[key]))
+   """)
+   first=read_row(r,'2022-01')
+   assert first[:6]==['US$ 1.000,00','-US$ 20,00','-2%','US$ 30,00','US$ 10,00','US$ 1.000,00'],first
+   missing=read_row(r,'2022-02')
+   assert missing[1:5]==['—','—','—','—'] and 'A preencher:' in missing[-1]
+   out_of_order=read_row(r,'2022-03')
+   assert out_of_order[:6]==['—','US$ 0,00','—','US$ 0,00','US$ 0,00','—']
+   assert 'Finalizado · saldo pendente' in out_of_order[-1] and 'fev.' in out_of_order[-1]
+   assert not r.locator('[data-pl-report-month="2026-12"]').count()
+   p.get_by_role('tab',name='Preenchimento mensal',exact=True).click()
+   for _ in range(4):
+    p.get_by_role('button',name='Ano anterior',exact=True).click()
+   monthly=p.locator('[data-pl-grid-month="2022-01"]')
+   assert first[0] in monthly.locator('[data-pl-month-value=open]').inner_text().replace('\xa0',' ')
+   assert first[1] in monthly.locator('[data-pl-inline-open=result]').inner_text().replace('\xa0',' ')
+   p.get_by_role('tab',name='Consolidado',exact=True).click()
+   p.locator('[data-pl-account]').select_option('')
+   r=print_report()
+   assert r.locator('.pl-report-plan').count()==3
+   assert 'Conta arquivada a omitir' not in r.inner_text() and 'LOGIN-OMITIR' not in r.inner_text()
+   assert 'Patrimônio necessário: US$ 2.000,00' in r.inner_text().replace('\xa0',' ')
+   assert 'Prazo original:' in r.inner_text()
+   assert 'O plano ainda não tem meses decorridos.' in r.inner_text()
+   open_row=[value.replace('\xa0',' ') for value in r.locator('table[aria-label="Execução mensal · Conta em andamento"]').locator('tbody td').all_inner_texts()]
+   assert open_row[:6]==['US$ 1.000,00','US$ 25,00','2,5%','US$ 40,00','—','US$ 1.065,00'],open_row
+   assert 'Em andamento' in open_row[-1] and 'Patrimônio parcial.' in open_row[-1]
+   p.pdf(path=str(OUT/'planejamento-patrimonial-exemplo.pdf'),format='A4',landscape=True,print_background=True,prefer_css_page_size=True)
+   p.evaluate("dispatchEvent(new Event('afterprint'))")
+   assert snapshot(p)==before and not r.count()
+   p.evaluate("""() => {
+     const raw=JSON.parse(localStorage.getItem(PlanningStore.KEY));
+     raw.writeId='outra-aba';localStorage.setItem(PlanningStore.KEY,JSON.stringify(raw));
+   }""")
+   r=print_report()
+   assert not r.count() and 'A base mudou em outra aba' in p.locator('[data-pl-notice]').inner_text()
+   p.evaluate("""() => {
+     const raw=JSON.parse(localStorage.getItem(PlanningStore.KEY));
+     delete raw.document.patrimonialPlanning.accounts[0].plan.reference;
+     localStorage.setItem(PlanningStore.KEY,JSON.stringify(raw));PlanningStore.reload();
+   }""")
+   r=print_report()
+   assert not r.count() and 'A base precisa ser reconferida' in p.locator('[data-pl-notice]').inner_text()
+   assert p.evaluate('window.__printCount')==2
    assert not errors and not network,(errors,network)
   finally:c.close()
- run('PDF matches visible chart sources and retains actual blocked metrics without mutations',pdf)
+ run('PDF plan, effective monthly execution, print scope, chart selection and storage guards',pdf)
  def native():
   with tempfile.TemporaryDirectory(prefix='pp-chart200-') as folder:
    d=Path(folder)/'Default';d.mkdir();(d/'Preferences').write_text(json.dumps({'partition':{'default_zoom_level':{'x':math.log(2)/math.log(1.2)}}}))
