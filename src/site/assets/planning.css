@@ -223,11 +223,25 @@ html[data-theme=dark] #planning .pl-native-monthly-grid .pl-month-past.pl-month-
 #planning .pl-native label.check input{flex:0 0 18px;width:18px;min-height:18px;height:18px;margin:2px 0 0;padding:0}
 #planning .pl-native .advanced-new{margin-top:17px}
 #planning .pl-native .forecast-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-#planning .pl-native .milestone{display:flex;flex-direction:column;gap:8px;padding:15px;background:var(--panel-2);border-radius:10px;font-size:12px}
-#planning .pl-native .milestone .duration{font-size:23px;letter-spacing:-.025em;font-weight:600}
-#planning .pl-native .milestone .caution{font-size:10px;color:var(--ink-dim)}
+#planning .pl-native .income-forecast h3{margin:0 0 10px;font-size:14px}
+#planning .pl-native .milestone{display:flex;flex-direction:column;gap:12px;padding:16px;background:var(--panel-2);border:1px solid var(--line);border-radius:16px;min-width:0}
+#planning .pl-native .milestone.dream{background:var(--accent-tint)}
+#planning .pl-native .milestone h4{font-size:14px;font-weight:650;line-height:1.35;margin:0}
+#planning .pl-native .milestone-time{margin-top:auto}
+#planning .pl-native .milestone-label,#planning .pl-native .milestone-details dt{display:block;font-size:11px;color:var(--ink-dim)}
+#planning .pl-native .milestone .duration{display:block;font-size:28px;line-height:1.15;letter-spacing:-.035em;font-weight:650;font-variant-numeric:tabular-nums}
+#planning .pl-native .milestone-details{display:flex;flex-wrap:wrap;gap:8px 16px;margin:0;padding-top:10px;border-top:1px solid var(--line)}
+#planning .pl-native .milestone-details dd{font-size:12px;font-weight:600;margin:3px 0 0;overflow-wrap:anywhere}
+#planning .pl-native .milestone-message{font-size:12px;color:var(--ink-dim);margin:0}
 #planning .pl-native .forecast{margin-top:16px;padding:16px;border-left:3px solid var(--violet);background:var(--accent-tint);border-radius:7px}
 #planning .pl-native .forecast output{display:block;font-size:23px;font-weight:600;margin-top:6px}
+#planning .pl-native .patrimony-forecast output{overflow-wrap:anywhere}
+#planning .pl-native .patrimony-forecast [hidden]{display:none}
+#planning .pl-native .patrimony-period{display:block;margin-top:5px;font-size:12px;color:var(--ink-dim)}
+#planning .pl-native .patrimony-parts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,115px),1fr));gap:8px 14px;margin:12px 0 0}
+#planning .pl-native .patrimony-parts dt{font-size:12px;color:var(--ink-dim)}
+#planning .pl-native .patrimony-parts dd{margin:3px 0 0;font-weight:600;overflow-wrap:anywhere}
+#planning .pl-native .patrimony-basis{display:block;margin-top:10px;font-size:12px;color:var(--ink-dim)}
 #planning .pl-native-intro:empty{display:none}
 #planning .pl-native-review-copy,#planning .pl-flow-prompt{white-space:pre-line;line-height:1.75}
 #planning .pl-native-review h3,#planning [data-pl-native-success] h3{font-size:23px;margin:5px 0 12px}

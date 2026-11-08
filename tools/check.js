@@ -9,7 +9,8 @@ const index=read('dist/index.html'),build=read('dist/assets/version.js').match(/
 for(const [,p] of index.matchAll(/(?:src|href)="((?:assets\/|favicon)[^"]+)"/g))assert.ok(fs.existsSync(path.join(root,'dist',p.split('?')[0])),'Asset exists: '+p);
 assert.equal([...index.matchAll(/id="planning"/g)].length,1,'One planning host');
 assert.ok(!/JP WEALTH|JP Wealth|STOIKUS|Stoikus/.test(read('dist/assets/planning-ui.js')),'Public identity fully separated');
-const allowed=['https://api.frankfurter.dev/v2/rate/USD/BRL','http://www.w3.org/2000/svg','https://www.investor.gov/introduction-investing','https://www.investor.gov/additional-resources/information/youth/teachers-classroom-resources/risk-and-return'];
+// OOXML identifiers are namespaces, not runtime network destinations.
+const allowed=['http://schemas.openxmlformats.org/spreadsheetml/2006/main','http://schemas.openxmlformats.org/officeDocument/2006/relationships','http://schemas.openxmlformats.org/package/2006','http://schemas.openxmlformats.org/drawingml/2006/chart','http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing','http://schemas.openxmlformats.org/drawingml/2006/main','https://api.frankfurter.dev/v2/rate/USD/BRL','http://www.w3.org/2000/svg','https://www.investor.gov/introduction-investing','https://www.investor.gov/additional-resources/information/youth/teachers-classroom-resources/risk-and-return'];
 for(const f of fs.readdirSync(path.join(root,'dist/assets')).filter(p=>p.endsWith('.js'))){for(const rawUrl of read('dist/assets/'+f).match(/https?:\/\/[^'"\s<>]+/g)||[]){const url=rawUrl.replace(/\\+$/,'');assert.ok(allowed.includes(url)||url.startsWith('http://www.w3.org/'),'Allowed URL '+url)};}
 assert.ok(read('dist/assets/storage.js').includes('planejamento_patrimonial_state_v1'));
 assert.ok(!read('dist/assets/storage.js').includes('localStorage.clear('));

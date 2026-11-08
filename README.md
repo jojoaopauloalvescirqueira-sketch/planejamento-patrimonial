@@ -122,3 +122,7 @@ Envie **`outputs/netlify/planejamento-patrimonial-netlify-fonte.zip`** no fluxo 
 A pasta publicada continua sendo dist. Para um deploy manual sem build, use o conteúdo já gerado de dist; o ZIP terminado em -fonte.zip é para o fluxo que executa o build. Os pacotes estáticos antigos e o ZIP terminado em -projeto.zip não representam esta organização corrigida.
 
 Outputs, caches, Git, ambiente, recuperações e dados do navegador não entram no ZIP. O manifest.json ao lado dele registra versão e hashes. A geração é local e não faz commit, push ou deploy.
+
+## Exportar Excel
+
+Use **Exportar Excel** no cabeçalho ou em **Backup e dados** para baixar um relatório da revisão confirmada. O arquivo inclui contas ativas e todo o horizonte, com abas filtráveis e gráficos nativos. **Incluir contas e planos arquivados** acrescenta histórico em abas separadas. Valores ausentes ficam em branco e os motivos aparecem junto dos registros. As projeções são simulações. O Excel é gerado localmente e o backup JSON continua sendo o arquivo de restauração.

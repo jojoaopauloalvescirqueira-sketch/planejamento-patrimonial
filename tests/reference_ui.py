@@ -97,7 +97,7 @@ def form_journey(page):
     check(page.evaluate('JPWPlanning.queries.snapshot().accounts.length') == 0,
           'choosing a profile and answering native questions writes no plan')
     submit = dialog.locator('[data-pl-submit]')
-    check(submit.inner_text() == 'Revisar plano', 'first form action is the source review step')
+    check(submit.inner_text() == 'Confirmar plano', 'first form action is the source review step')
     submit.click()
     check('Confira antes de salvar' in dialog.inner_text(), 'review is a separate confirmation step')
     check(page.evaluate('JPWPlanning.queries.snapshot().accounts.length') == 0,
@@ -344,7 +344,8 @@ def fx_edit_journey(page):
     page.wait_for_function("document.querySelector('#pl-native-sonhoUsd').textContent.includes('1.000,00')")
     check('1.000,00' in page.locator('#pl-native-costUsd').inner_text(),
           'refreshing desired income does not refresh current living cost')
-    check('33.333,34' in page.locator('#pl-native-metaPrevista').inner_text(),
+    capital = page.locator('#pl-native-dreamSummary dl > div').filter(has_text='Patrimônio necessário')
+    check('33.333,34' in capital.locator('dd').inner_text(),
           'explicit income refresh recalculates required capital from USD1000 divided by 3 percent')
     check(page.evaluate('JSON.stringify(JPWPlanning.queries.snapshot())') == before,
           'explicit quote refresh changes the draft only')
